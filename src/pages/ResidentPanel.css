@@ -1,0 +1,237 @@
+.resident-page {
+    padding: 40px 0;
+    background-color: var(--bg-color);
+    min-height: calc(100vh - 70px);
+}
+
+.page-header {
+    margin-bottom: 40px;
+}
+
+.page-title {
+    font-size: 2rem;
+    color: var(--primary-dark);
+}
+
+.page-subtitle {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+.resident-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: start;
+}
+
+/* Form Card */
+.request-card {
+    border-top: 4px solid var(--primary-color);
+}
+
+.card-header-internal {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.icon-wrapper {
+    width: 48px;
+    height: 48px;
+    background-color: rgba(46, 125, 50, 0.1);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.icon-main {
+    color: var(--primary-color);
+    width: 24px;
+    height: 24px;
+}
+
+.card-desc {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-md);
+}
+
+.w-full {
+    width: 100%;
+}
+
+.mt-4 {
+    margin-top: 16px;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    background: white;
+    border-radius: var(--radius-lg);
+    border: 2px dashed #E0E0E0;
+    color: var(--text-secondary);
+}
+
+.empty-graphic {
+    width: 80px;
+    height: 80px;
+    background-color: var(--bg-color);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 20px;
+}
+
+.empty-icon {
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+/* Success State */
+.status-card.success {
+    background: linear-gradient(145deg, #ffffff 0%, #f0fdf4 100%);
+    border: 1px solid #bbf7d0;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.status-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.status-icon {
+    color: var(--success-color);
+}
+
+.schedule-details {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.detail-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 1rem;
+}
+
+.detail-item .label {
+    color: var(--text-secondary);
+}
+
+.detail-item .value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cost-box {
+    background-color: rgba(0, 0, 0, 0.03);
+    padding: 16px;
+    border-radius: var(--radius-sm);
+}
+
+.eco-impact-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px dashed #bbf7d0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.eco-metric {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--primary-light);
+    font-size: 0.95rem;
+}
+
+.eco-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background-color: #dcfce7;
+    color: var(--primary-dark);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    align-self: flex-start;
+}
+
+.cost-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.cost-row:last-child {
+    margin-bottom: 0;
+}
+
+.cost-value {
+    font-weight: 700;
+}
+
+.savings {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
+.pulse-indicator {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    justify-content: center;
+}
+
+.pulse-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--secondary-color);
+    border-radius: 50%;
+    animation: pulse-dot 1.5s infinite;
+}
+
+@keyframes pulse-dot {
+    0% {
+        transform: scale(0.9);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.5);
+        opacity: 0.5;
+    }
+
+    100% {
+        transform: scale(0.9);
+        opacity: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .resident-grid {
+        grid-template-columns: 1fr;
+        gap: 24px;
+    }
+}

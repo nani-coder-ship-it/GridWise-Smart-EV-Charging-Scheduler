@@ -1,0 +1,54 @@
+.footer {
+    background-color: white;
+    padding: 40px 0 20px;
+    border-top: 1px solid #e5e7eb;
+    margin-top: auto;
+}
+
+.footer-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+}
+
+.footer-title {
+    font-size: 1.25rem;
+    color: var(--primary-dark);
+    margin-bottom: 4px;
+}
+
+.footer-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.sdg-badges {
+    display: flex;
+    gap: 12px;
+}
+
+.sdg-pill {
+    background-color: var(--primary-light);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.footer-bottom {
+    text-align: center;
+    padding-top: 20px;
+    border-top: 1px solid #f3f4f6;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+    .footer-content {
+        flex-direction: column;
+        text-align: center;
+        gap: 20px;
+    }
+}
