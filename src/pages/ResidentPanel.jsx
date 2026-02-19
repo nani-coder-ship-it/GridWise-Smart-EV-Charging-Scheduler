@@ -3,21 +3,73 @@ import Navbar from '../components/layout/Navbar';
 import Card, { CardTitle, CardContent } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
-import { BatteryCharging, CheckCircle2, Zap, ArrowRight, Leaf } from 'lucide-react';
+import { BatteryCharging, CheckCircle2, Zap, ArrowRight, Leaf, AlertTriangle } from 'lucide-react';
 import { useGrid } from '../context/GridContext';
 import './ResidentPanel.css';
 
 const ResidentPanel = () => {
-    const { addRequest } = useGrid();
+    const { addRequest, submissionResult } = useGrid();
     const [formData, setFormData] = useState({
         currentBattery: '',
         targetBattery: '80',
         departureTime: '',
+        chargerType: 'AC',
         priority: 'normal'
     });
 
     const [requestStatus, setRequestStatus] = useState(null); // null, 'loading', 'scheduled'
     const [schedule, setSchedule] = useState(null);
+
+    // Persist success message from Context
+    React.useEffect(() => {
+        if (submissionResult) {
+            if (submissionResult.success) {
+                setSchedule(submissionResult.schedule);
+                setRequestStatus('scheduled');
+            } else if (submissionResult.success === false) {
+                setRequestStatus('error');
+            }
+        }
+    }, [submissionResult]);
+
+    // Helper to format ISO time to Local 12h format
+    const formatTime = (isoString) => {
+        if (!isoString) return '--:--';
+        return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    // Progress Simulation Logic
+    const [progress, setProgress] = useState(0);
+    const [statusLabel, setStatusLabel] = useState('Scheduled');
+
+    React.useEffect(() => {
+        if (!schedule) return;
+
+        const updateProgress = () => {
+            const now = new Date();
+            // Schedule times are now ISO strings from backend
+            const startTime = new Date(schedule.startTime);
+            const endTime = new Date(schedule.endTime);
+
+            if (now < startTime) {
+                setProgress(0);
+                setStatusLabel(`Scheduled for ${formatTime(schedule.startTime)}`);
+            } else if (now >= startTime && now <= endTime) {
+                const total = endTime - startTime;
+                const elapsed = now - startTime;
+                const pct = Math.min(100, Math.max(0, (elapsed / total) * 100));
+                setProgress(pct);
+                setStatusLabel(`⚡ Charging... ${Math.round(pct)}%`);
+            } else {
+                setProgress(100);
+                setStatusLabel('Completed');
+            }
+        };
+
+        updateProgress(); // Initial
+        const timer = setInterval(updateProgress, 10000); // Update every 10s
+        return () => clearInterval(timer);
+    }, [schedule]);
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -33,33 +85,12 @@ const ResidentPanel = () => {
         setFormData(prev => ({ ...prev, [name]: newValue }));
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         setRequestStatus('loading');
 
-        // Simulate AI Optimization Delay
-        setTimeout(() => {
-            // Mock Scheduling Logic
-            const departure = new Date(formData.departureTime);
-            const start = new Date(departure);
-            start.setHours(start.getHours() - 3); // Mock 3 hour charge
-
-            const newSchedule = {
-                startTime: start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                endTime: departure.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                duration: '3h 15m',
-                cost: '$4.50',
-                savings: '$1.20',
-                load: 'Optimized',
-                carbonReduced: '1.8 kg CO₂',
-                isOffPeak: true,
-                timeRange: `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${departure.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-            };
-
-            setSchedule(newSchedule);
-            addRequest({ ...formData, schedule: newSchedule });
-            setRequestStatus('scheduled');
-        }, 1500);
+        // addRequest now updates global state, which triggers the useEffect above
+        await addRequest(formData);
     };
 
     return (
@@ -107,6 +138,20 @@ const ResidentPanel = () => {
                                             onChange={handleInputChange}
                                             required
                                         />
+                                    </div>
+
+                                    <div className="input-wrapper mb-4">
+                                        <label className="input-label">Charger Type</label>
+                                        <select
+                                            className="input-field"
+                                            name="chargerType"
+                                            value={formData.chargerType}
+                                            onChange={handleInputChange}
+                                        >
+                                            <option value="AC">AC Standard (7kW)</option>
+                                            <option value="DC">DC Fast Charge (50kW)</option>
+                                        </select>
+                                        <p className="text-xs text-gray-500 mt-1">DC Fast Charge is high power and may be limited during peak grid stress.</p>
                                     </div>
 
                                     <Input
@@ -162,11 +207,11 @@ const ResidentPanel = () => {
                                         <div className="schedule-details">
                                             <div className="detail-item">
                                                 <span className="label">Start Time</span>
-                                                <span className="value">{schedule.startTime}</span>
+                                                <span className="value">{formatTime(schedule.startTime)}</span>
                                             </div>
                                             <div className="detail-item">
                                                 <span className="label">End Time</span>
-                                                <span className="value">{schedule.endTime}</span>
+                                                <span className="value">{formatTime(schedule.endTime)}</span>
                                             </div>
                                             <div className="detail-item">
                                                 <span className="label">Duration</span>
@@ -185,6 +230,19 @@ const ResidentPanel = () => {
                                             </div>
                                         </div>
                                     </CardContent>
+                                    {/* Smart Notification / Insight */}
+                                    {submissionResult?.insight && (
+                                        <div className={`notification-box ${submissionResult.insight.type}`}>
+                                            <div className="flex gap-2 items-start">
+                                                <AlertTriangle size={18} className="mt-1 flex-shrink-0" />
+                                                <div>
+                                                    <h4 className="font-bold text-sm uppercase mb-1">Smart Grid Alert</h4>
+                                                    <p className="text-sm">{submissionResult.insight.message}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="eco-impact-section">
                                         <div className="eco-metric">
                                             <Leaf size={18} className="text-green-600" />
@@ -196,20 +254,35 @@ const ResidentPanel = () => {
                                             </div>
                                         )}
                                     </div>
-                                </Card>
 
-                                <div className="pulse-indicator">
-                                    <span className="pulse-dot"></span>
-                                    Waiting for vehicle connection...
-                                </div>
+                                    {/* Charging Progress UI */}
+                                    <div className="charging-progress-container mt-4 p-4 bg-gray-50 rounded-lg">
+                                        <div className="flex justify-between text-sm mb-2">
+                                            <span className="font-medium text-gray-700">Charging Progress</span>
+                                            <span className={`font-bold ${progress === 100 ? 'text-green-600' : progress > 0 ? 'text-blue-600' : 'text-gray-500'}`}>
+                                                {statusLabel}
+                                            </span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                            <div
+                                                className={`h-2.5 rounded-full transition-all duration-1000 ${progress === 100 ? 'bg-green-600' : 'bg-blue-600'}`}
+                                                style={{ width: `${progress}%` }}
+                                            ></div>
+                                        </div>
+                                        <div className="flex justify-between text-xs text-gray-500 mt-2">
+                                            <span>Current: {formData.currentBattery}%</span>
+                                            <span>Target: {formData.targetBattery}%</span>
+                                        </div>
+                                    </div>
+                                </Card>
                             </div>
                         ) : (
                             <div className="empty-state">
                                 <div className="empty-graphic">
                                     <Zap size={48} className="empty-icon" />
                                 </div>
-                                <h3>No Optimized Charging Allocation</h3>
-                                <p>Submit a charging request to see your AI-optimized schedule and cost estimates.</p>
+                                <h3 className="text-gray-700 font-bold mb-2">No Active Session</h3>
+                                <p className="text-gray-500 text-sm">Submit a request to let AI optimize your charging schedule.</p>
                             </div>
                         )}
                     </div>

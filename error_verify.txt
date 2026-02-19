@@ -1,0 +1,2 @@
+ERROR DETAIL: name 'power_kw' is not defined
+MESSAGE: Scheduling Failed: name 'power_kw' is not defined

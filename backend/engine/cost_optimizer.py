@@ -1,52 +1,88 @@
+from datetime import datetime, timedelta
+
 class CostOptimizer:
-    PEAK_RATE = 0.25  # $/kWh
-    OFF_PEAK_RATE = 0.12  # $/kWh
+    PEAK_RATE = 10.0  # INR/kWh
+    OFF_PEAK_RATE = 6.0  # INR/kWh
+    SOLAR_RATE = 4.0 # INR/kWh - Cheapest!
+    
     PEAK_START = 18
     PEAK_END = 22
+    SOLAR_START = 10
+    SOLAR_END = 14
+
+    PRIORITY_MULTIPLIERS = {
+        'emergency': 1.5,
+        'normal': 1.0,
+        'flexible': 0.9
+    }
 
     @staticmethod
-    def is_peak_hour(hour: int) -> bool:
-        return CostOptimizer.PEAK_START <= hour < CostOptimizer.PEAK_END
+    def is_peak_hour(dt: datetime) -> bool:
+        return CostOptimizer.PEAK_START <= dt.hour < CostOptimizer.PEAK_END
 
     @staticmethod
-    def calculate_cost(kwh: float, start_hour: int, duration_hours: float) -> float:
+    def is_solar_hour(dt: datetime) -> bool:
+        return CostOptimizer.SOLAR_START <= dt.hour < CostOptimizer.SOLAR_END
+
+    @staticmethod
+    def calculate_cost(kwh: float, start_time: datetime, duration_hours: float, priority: str = 'normal') -> float:
         """
-        Calculate cost considering peak/off-peak windows.
-        Simple approximation: if start is in peak, assume mostly peak? 
-        Or weighted average? Let's do simple for now or a bit smarter.
+        Calculate cost considering peak/off-peak windows and priority multipliers.
         """
         cost = 0.0
-        current_hour = start_hour
+        current_time = start_time
         remaining_duration = duration_hours
+        power_kw = kwh / duration_hours if duration_hours > 0 else 0
+
+        # Iterate in 15-minute intervals for better precision
+        step_minutes = 15
+        step_hours = step_minutes / 60.0
         
-        # We can simulate hour by hour
+        multiplier = CostOptimizer.PRIORITY_MULTIPLIERS.get(priority, 1.0)
+
         while remaining_duration > 0:
-            step = min(1.0, remaining_duration) # 1 hour steps
-            rate = CostOptimizer.PEAK_RATE if CostOptimizer.is_peak_hour(int(current_hour) % 24) else CostOptimizer.OFF_PEAK_RATE
-            cost += step * (kwh / duration_hours) * rate # distribute kwh per hour
-            remaining_duration -= step
-            current_hour += step
+            effective_step = min(step_hours, remaining_duration)
+            
+            if CostOptimizer.is_peak_hour(current_time):
+                rate = CostOptimizer.PEAK_RATE
+            elif CostOptimizer.is_solar_hour(current_time):
+                rate = CostOptimizer.SOLAR_RATE
+            else:
+                rate = CostOptimizer.OFF_PEAK_RATE
+            
+            # Apply priority multiplier to the rate
+            final_rate = rate * multiplier
+            cost += (power_kw * effective_step) * final_rate
+            
+            remaining_duration -= effective_step
+            current_time += timedelta(minutes=step_minutes)
             
         return cost
 
     @staticmethod
-    def find_optimal_start_time(kwh: float, duration_hours: float, departure_hour: int, current_hour: int) -> int:
+    def find_optimal_start_time(kwh: float, duration_hours: float, departure_time: datetime, current_time: datetime) -> datetime:
         """
-        Find best start hour to minimize cost before departure.
-        Simple heuristic: check all possible start times.
+        Find best start time to minimize cost before departure.
         """
-        best_hour = current_hour
-        min_cost = float('inf')
+        # Latest we can start is departure - duration
+        latest_start = departure_time - timedelta(hours=duration_hours)
         
-        # We can start anytime from now until (departure - duration)
-        latest_start = int(departure_hour - duration_hours)
-        if latest_start < current_hour:
-            return current_hour # Can't optimize, must start now
-            
-        for start_h in range(current_hour, latest_start + 1):
-            cost = CostOptimizer.calculate_cost(kwh, start_h, duration_hours)
+        if latest_start < current_time:
+            return current_time # Must start now (or impossible, but let's do best effort)
+
+        best_time = current_time
+        min_cost = float('inf')
+
+        # Check every 30 mins from now until latest_start
+        check_time = current_time
+        
+        # Limit lookahead to avoid infinite loops if something is wrong, though logic should hold
+        while check_time <= latest_start:
+            cost = CostOptimizer.calculate_cost(kwh, check_time, duration_hours)
             if cost < min_cost:
                 min_cost = cost
-                best_hour = start_h
+                best_time = check_time
+            
+            check_time += timedelta(minutes=30)
                 
-        return best_hour
+        return best_time

@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "C:\Users\anisha\OneDrive\Desktop\AI Smart EV Charging Orchestrator\backend\api\routes.py", line 33, in schedule_charging
+    if departure_time <= datetime.utcnow():
+TypeError: can't compare offset-naive and offset-aware datetimes

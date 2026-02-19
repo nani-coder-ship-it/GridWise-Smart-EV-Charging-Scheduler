@@ -14,6 +14,7 @@ class ChargingRequest(db.Model):
     estimated_duration_minutes = db.Column(db.Float, nullable=False)
     fairness_score = db.Column(db.Float, default=1.0)
     status = db.Column(db.String(20), default='pending')  # 'pending', 'scheduled', 'completed'
+    charger_type = db.Column(db.String(10), default='AC')
 
     def to_dict(self):
         return {
@@ -36,6 +37,8 @@ class ChargingAllocation(db.Model):
     estimated_cost = db.Column(db.Float, nullable=False)
     cost_without_optimization = db.Column(db.Float, nullable=False)
     peak_optimized = db.Column(db.Boolean, default=False)
+    status = db.Column(db.String(20), default='Scheduled')
+    charger_type = db.Column(db.String(10), default='AC')
     carbon_savings_kg = db.Column(db.Float, default=0.0)
 
     request = db.relationship('ChargingRequest', backref=db.backref('allocation', uselist=False))
@@ -49,3 +52,20 @@ class GridStatus(db.Model):
     total_load_kw = db.Column(db.Float, nullable=False)
     transformer_capacity_kw = db.Column(db.Float, nullable=False)
     stress_level = db.Column(db.String(20), nullable=False)  # 'Stable', 'Moderate', 'Critical'
+
+class SystemLog(db.Model):
+    __tablename__ = 'system_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    level = db.Column(db.String(20), nullable=False) # 'INFO', 'WARNING', 'ERROR', 'ACTION'
+    message = db.Column(db.String(255), nullable=False)
+    action_type = db.Column(db.String(50), nullable=True) # 'THROTTLE', 'RESCHEDULE', 'RESTRICT'
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'timestamp': self.timestamp.strftime('%H:%M:%S'),
+            'level': self.level,
+            'message': self.message,
+            'action_type': self.action_type
+        }
