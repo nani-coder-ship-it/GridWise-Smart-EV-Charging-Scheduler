@@ -1,13 +1,12 @@
 import React from 'react';
-import { 
-    AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, PieChart, Pie, Cell 
+import {
+    AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+    ReferenceArea, PieChart, Pie, Cell
 } from 'recharts';
-import { 
-    Activity, Zap, TrendingUp, Leaf, Sun, Wind
-} from 'lucide-react';
+import { Activity, Zap, TrendingUp, Leaf, Sun, Wind } from 'lucide-react';
+import SystemIntelligence from './SystemIntelligence';
 
 const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeFloat }) => {
-    // Donut Chart Data
     const usageData = [
         { name: 'AC Level 2', value: stats.acLoad || 40 },
         { name: 'DC Fast', value: stats.dcLoad || 20 },
@@ -17,6 +16,7 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
 
     return (
         <div className="dashboard-scroll">
+            {/* ── Main 3-column layout ── */}
             <div className="center-panel">
                 {/* KPI GRID */}
                 <div className="kpi-grid">
@@ -25,9 +25,7 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                             <span>Transformer Load</span>
                             <Activity size={18} className="text-blue-500" />
                         </div>
-                        <div className="kpi-value">
-                            {safeNum(stats.transformerUtilization)}%
-                        </div>
+                        <div className="kpi-value">{safeNum(stats.transformerUtilization)}%</div>
                         <div>
                             <span className={`kpi-trend ${stats.stressLevel === 'Critical' ? 'trend-down' : 'trend-up'}`}>
                                 {stats.stressLevel || 'Stable'}
@@ -40,12 +38,8 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                             <span>Cost Saved</span>
                             <Leaf size={18} className="text-green-500" />
                         </div>
-                        <div className="kpi-value text-green-600">
-                            {formatCurrency(stats.costSaved)}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                            {safeFloat(stats.carbonSaved)} kg CO₂ avoided
-                        </div>
+                        <div className="kpi-value text-green-600">{formatCurrency(stats.costSaved)}</div>
+                        <div className="text-xs text-gray-500">{safeFloat(stats.carbonSaved)} kg CO₂ avoided</div>
                     </div>
 
                     <div className="glass-card kpi-card">
@@ -67,12 +61,8 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                             <span>Next Peak</span>
                             <TrendingUp size={18} className="text-purple-500" />
                         </div>
-                        <div className="kpi-value">
-                            {stats.peakPrediction || '19:00'}
-                        </div>
-                        <div>
-                            <span className="kpi-trend trend-neutral">Forecast</span>
-                        </div>
+                        <div className="kpi-value">{stats.peakPrediction || '19:00'}</div>
+                        <div><span className="kpi-trend trend-neutral">Forecast</span></div>
                     </div>
                 </div>
 
@@ -89,20 +79,20 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                         <AreaChart data={historyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <defs>
                                 <linearGradient id="colorLoad" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
+                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                                 </linearGradient>
                                 <linearGradient id="colorOptimized" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.1} />
+                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                                 </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                            <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
-                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
-                            <Tooltip 
-                                contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
-                                itemStyle={{fontSize: '12px'}}
+                            <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                            <Tooltip
+                                contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                                itemStyle={{ fontSize: '12px' }}
                             />
                             <ReferenceArea x1="18:00" x2="22:00" fill="#fee2e2" fillOpacity={0.2} />
                             <Area type="monotone" dataKey="raw_load" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorLoad)" />
@@ -114,9 +104,7 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                 {/* AI INSIGHTS */}
                 <div className="ai-insights">
                     <div className="glass-card insight-block">
-                        <div className="insight-icon">
-                            <Zap size={24} />
-                        </div>
+                        <div className="insight-icon"><Zap size={24} /></div>
                         <div>
                             <h4 className="font-bold text-gray-800 mb-1">AI Recommendation</h4>
                             <p className="text-sm text-gray-600 mb-0">
@@ -124,8 +112,8 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                             </p>
                         </div>
                     </div>
-                    <div className="glass-card insight-block" style={{borderLeftColor: '#3b82f6', background: '#eff6ff'}}>
-                        <div className="insight-icon" style={{color: '#3b82f6', background: 'rgba(59, 130, 246, 0.1)'}}>
+                    <div className="glass-card insight-block" style={{ borderLeftColor: '#3b82f6', background: '#eff6ff' }}>
+                        <div className="insight-icon" style={{ color: '#3b82f6', background: 'rgba(59, 130, 246, 0.1)' }}>
                             <TrendingUp size={24} />
                         </div>
                         <div>
@@ -186,7 +174,7 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
             <aside className="right-panel">
                 <div className="glass-card donut-widget text-center">
                     <h4 className="text-gray-600 font-semibold mb-2">Charger Utilization</h4>
-                    <div style={{width: '100%', height: 200}}>
+                    <div style={{ width: '100%', height: 200 }}>
                         <ResponsiveContainer>
                             <PieChart>
                                 <Pie
@@ -196,15 +184,14 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                                     paddingAngle={5}
                                     dataKey="value"
                                 >
-                                    {usageData.map((entry, index) => (
+                                    {usageData.map((_, index) => (
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip />
                             </PieChart>
                         </ResponsiveContainer>
                     </div>
-                    <div className="text-center mt-[-10px]">
+                    <div style={{ textAlign: 'center' }}>
                         <span className="text-2xl font-bold text-gray-800">{safeNum(stats.transformerUtilization)}%</span>
                         <span className="block text-xs text-gray-500">Total Load</span>
                     </div>
@@ -221,7 +208,7 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                             <p className="text-xl font-bold text-gray-800">{stats.renewablePercent || 45}%</p>
                         </div>
                     </div>
-                        <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4">
                         <div className="p-3 bg-blue-100 rounded-lg text-blue-600">
                             <Wind size={24} />
                         </div>
@@ -232,6 +219,11 @@ const Overview = ({ stats, historyData, sessions, formatCurrency, safeNum, safeF
                     </div>
                 </div>
             </aside>
+
+            {/* ── System Intelligence Panel — full width ── */}
+            <div style={{ padding: '0 1.5rem 2rem', gridColumn: '1 / -1' }}>
+                <SystemIntelligence stats={stats} />
+            </div>
         </div>
     );
 };
