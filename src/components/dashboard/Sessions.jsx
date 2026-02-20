@@ -61,7 +61,7 @@ const Sessions = ({ sessions }) => {
         if (filter === 'All') return true;
         if (filter === 'Active') return status === 'charging' || status === 'scheduled';
         if (filter === 'Completed') return status === 'completed';
-        if (filter === 'Emergency') return priority === 'emergency';
+        if (filter === 'Emergency') return priority === 'emergency' && status !== 'completed';
         return true;
     });
 
