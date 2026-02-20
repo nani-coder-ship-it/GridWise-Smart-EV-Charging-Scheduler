@@ -185,6 +185,8 @@ def get_completed_sessions():
         cost_usd = round(cost_inr / 83.0, 2)
         
         results.append({
+            'id': alloc.id,
+            'request_id': alloc.request_id,
             'vehicle_id': vehicle_id,
             'priority': priority,
             'start_time': alloc.allocated_start_time.strftime('%H:%M'),
@@ -196,6 +198,33 @@ def get_completed_sessions():
     
     results.sort(key=lambda x: x['end_time'], reverse=True)
     return jsonify(results)
+
+
+@api.route('/sessions/<int:allocation_id>', methods=['DELETE'])
+def delete_session(allocation_id):
+    """Delete a completed allocation (and its parent request if no other allocations remain)."""
+    try:
+        alloc = ChargingAllocation.query.get(allocation_id)
+        if not alloc:
+            return jsonify({'error': 'Session not found'}), 404
+
+        request_id = alloc.request_id
+        db.session.delete(alloc)
+        db.session.flush()  # Push delete before checking siblings
+
+        # If the parent request has no remaining allocations, delete it too
+        remaining = ChargingAllocation.query.filter_by(request_id=request_id).count()
+        if remaining == 0:
+            parent = ChargingRequest.query.get(request_id)
+            if parent:
+                db.session.delete(parent)
+
+        db.session.commit()
+        return jsonify({'success': True, 'deleted_id': allocation_id}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 
 @api.route('/system/logs', methods=['GET'])
 def get_system_logs():
