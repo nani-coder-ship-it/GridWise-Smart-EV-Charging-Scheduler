@@ -5,10 +5,58 @@ from database.models import ChargingRequest, GridStatus, ChargingAllocation, Sys
 from engine.scheduler import Scheduler
 from engine.insights import InsightsGenerator
 from engine.grid_manager import GridLoadManager
+from engine.slot_suggester import SlotSuggester
 
 api = Blueprint('api', __name__)
 scheduler = Scheduler()
 grid_manager = GridLoadManager()
+slot_suggester = SlotSuggester()
+
+@api.route('/suggest-slots', methods=['POST'])
+def suggest_slots():
+    """Return top-3 alternative charging slots scored by grid, cost, and solar."""
+    data = request.json or {}
+    required = ['current_battery', 'target_battery', 'departure_time']
+    missing  = [f for f in required if f not in data]
+    if missing:
+        return jsonify({'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    try:
+        current_battery  = float(data['current_battery'])
+        target_battery   = float(data['target_battery'])
+        battery_capacity = float(data.get('battery_capacity', 60.0))
+        charger_type     = data.get('charger_type', 'AC')
+        priority         = data.get('priority', 'normal')
+
+        power_kw         = 50.0 if charger_type == 'DC' else 7.2
+        required_kwh     = (target_battery - current_battery) / 100.0 * battery_capacity
+        duration_hours   = required_kwh / power_kw
+
+        departure_time   = datetime.fromisoformat(data['departure_time'].replace('Z', '+00:00'))
+        # Work in UTC-naive for scoring (same as rest of engine)
+        dep_naive        = departure_time.replace(tzinfo=None)
+        now_naive        = datetime.utcnow()
+
+        suggestions = slot_suggester.suggest(
+            kwh=required_kwh,
+            duration_hours=duration_hours,
+            departure_time=dep_naive,
+            current_time=now_naive,
+            priority=priority,
+            db=db,
+        )
+
+        # Strip datetime objects (not JSON-serialisable)
+        for s in suggestions:
+            s.pop('start_dt', None)
+            s.pop('end_dt',   None)
+
+        return jsonify({'suggestions': suggestions}), 200
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 
 @api.route('/schedule', methods=['POST'])
 def schedule_charging():
@@ -97,8 +145,12 @@ def schedule_charging():
         db.session.add(req)
         db.session.flush() # Generate ID but don't commit yet to avoid zombie requests if scheduling fails
         
-        # Run Scheduler
-        allocation = scheduler.schedule_request(req)
+        # 3b. If caller supplied a preferred slot (from slot suggestion), use it directly
+        preferred_slot = data.get('preferred_slot')
+        if preferred_slot:
+            req.status = 'scheduled'
+        # Run Scheduler (will respect preferred_slot inside)
+        allocation = scheduler.schedule_request(req, preferred_start=preferred_slot)
         db.session.add(allocation)
         req.status = 'scheduled'
         

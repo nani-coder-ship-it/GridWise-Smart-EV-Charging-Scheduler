@@ -117,7 +117,7 @@ class Scheduler:
             
             db.session.commit()
             
-    def schedule_request(self, request):
+    def schedule_request(self, request, preferred_start=None):
         """
         Main scheduling logic.
         """
@@ -153,7 +153,15 @@ class Scheduler:
         
         in_emergency = self.grid_manager.check_emergency_mode(estimated_load)
         
-        if is_emergency:
+        if preferred_start:
+            # User selected a suggested slot — use it directly
+            try:
+                ps = datetime.fromisoformat(str(preferred_start).replace('Z', '+00:00'))
+                start_time = ps.replace(tzinfo=None)  # normalize to UTC-naive
+            except Exception:
+                start_time = current_time
+            peak_optimized = True
+        elif is_emergency:
             # Schedule immediately
             start_time = current_time
             peak_optimized = False
