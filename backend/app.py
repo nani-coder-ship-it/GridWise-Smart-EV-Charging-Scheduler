@@ -8,8 +8,11 @@ app = Flask(__name__)
 CORS(app) # Enable CORS for frontend
 
 # Configure SQLite
-db_path = os.path.join(os.path.dirname(__file__), 'gridwise.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+if os.environ.get('FLASK_ENV') == 'testing':
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+else:
+    db_path = os.path.join(os.path.dirname(__file__), 'gridwise.db')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)

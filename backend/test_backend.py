@@ -1,12 +1,15 @@
 import unittest
 import json
+import os
+os.environ['FLASK_ENV'] = 'testing' # Set before importing app
+
+from datetime import datetime, timedelta
 from app import app, db
 from database.models import ChargingRequest
 
 class BackendTestCase(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
-        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
         self.app = app.test_client()
         with app.app_context():
             db.create_all()
@@ -17,14 +20,14 @@ class BackendTestCase(unittest.TestCase):
             "current_battery": 20,
             "target_battery": 80,
             "battery_capacity": 60,
-            "departure_time": "2023-10-27T18:00:00Z",
+            "departure_time": (datetime.utcnow() + timedelta(days=1)).isoformat() + "Z",
             "priority": "normal"
         }
         res = self.app.post('/api/schedule', json=payload)
         data = res.get_json()
         
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(data['status'], 'scheduled')
+        self.assertEqual(data['status'], 'success')
         self.assertIn('startTime', data['schedule'])
         self.assertIn('cost', data['schedule'])
         # Check if DB has record

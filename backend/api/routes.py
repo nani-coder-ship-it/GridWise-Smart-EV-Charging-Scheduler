@@ -140,16 +140,47 @@ def schedule_charging():
 
 @api.route('/active-schedule', methods=['GET'])
 def get_active_schedule():
-    # Filter only future/active allocations (Clean Data)
+    # Return future/active allocations with real derived status
     now = datetime.utcnow()
     allocations = ChargingAllocation.query.filter(ChargingAllocation.allocated_end_time > now).all()
     
     results = []
     for alloc in allocations:
-        # Mocking vehicle_id/priority if not strictly joined, but we have request relationship
         vehicle_id = alloc.request.vehicle_id if alloc.request else f"EV-{alloc.request_id}"
         priority = alloc.request.priority_level.capitalize() if alloc.request else "Normal"
+        cost_inr = alloc.estimated_cost
+        cost_usd = round(cost_inr / 83.0, 2)
         
+        # Derive real status from time window
+        if alloc.allocated_start_time <= now <= alloc.allocated_end_time:
+            status = 'Charging'
+        else:
+            status = 'Scheduled'
+        
+        results.append({
+            'vehicle_id': vehicle_id,
+            'priority': priority,
+            'start_time': alloc.allocated_start_time.strftime('%H:%M'),
+            'end_time': alloc.allocated_end_time.strftime('%H:%M'),
+            'status': status,
+            'cost_inr': cost_inr,
+            'cost_usd': cost_usd
+        })
+    
+    results.sort(key=lambda x: x['start_time'])
+    return jsonify(results)
+
+
+@api.route('/completed-sessions', methods=['GET'])
+def get_completed_sessions():
+    """Return past charging sessions (allocated_end_time <= now)"""
+    now = datetime.utcnow()
+    allocations = ChargingAllocation.query.filter(ChargingAllocation.allocated_end_time <= now).all()
+    
+    results = []
+    for alloc in allocations:
+        vehicle_id = alloc.request.vehicle_id if alloc.request else f"EV-{alloc.request_id}"
+        priority = alloc.request.priority_level.capitalize() if alloc.request else "Normal"
         cost_inr = alloc.estimated_cost
         cost_usd = round(cost_inr / 83.0, 2)
         
@@ -158,13 +189,12 @@ def get_active_schedule():
             'priority': priority,
             'start_time': alloc.allocated_start_time.strftime('%H:%M'),
             'end_time': alloc.allocated_end_time.strftime('%H:%M'),
-            'status': 'Scheduled', # Could derive from time vs now
+            'status': 'Completed',
             'cost_inr': cost_inr,
             'cost_usd': cost_usd
         })
     
-    # Sort by start time?
-    results.sort(key=lambda x: x['start_time'])
+    results.sort(key=lambda x: x['end_time'], reverse=True)
     return jsonify(results)
 
 @api.route('/system/logs', methods=['GET'])
