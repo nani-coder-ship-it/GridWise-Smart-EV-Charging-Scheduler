@@ -25,6 +25,8 @@ def suggest_slots():
         current_battery  = float(data['current_battery'])
         target_battery   = float(data['target_battery'])
         battery_capacity = float(data.get('battery_capacity', 60.0))
+        if not (1 <= battery_capacity <= 200):
+            return jsonify({'error': 'Battery capacity must be between 1 and 200 kWh'}), 400
         charger_type     = data.get('charger_type', 'AC')
         priority         = data.get('priority', 'normal')
 
@@ -125,12 +127,17 @@ def schedule_charging():
             db.session.delete(existing_req)
             db.session.flush() # Ensure delete is processed before adding new
 
+        # Validate battery capacity range (1–200 kWh, covering scooters to large cars)
+        battery_capacity = float(data.get('battery_capacity', 60.0))
+        if not (1 <= battery_capacity <= 200):
+            return jsonify({'error': 'Battery capacity must be between 1 and 200 kWh'}), 400
+
         # Create Request Record
         req = ChargingRequest(
             vehicle_id=data['vehicle_id'],
             current_battery_percent=current_battery,
             target_battery_percent=target_battery,
-            battery_capacity_kwh=data.get('battery_capacity', 60.0), # Default 60kWh
+            battery_capacity_kwh=battery_capacity,
             departure_time=departure_time,
             priority_level=data['priority'],
             charger_type=data.get('charger_type', 'AC'), # New field

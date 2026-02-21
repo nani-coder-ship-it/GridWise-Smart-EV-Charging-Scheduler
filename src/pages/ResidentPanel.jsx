@@ -205,8 +205,8 @@ const ResidentPanel = () => {
                                             label="Battery Capacity (kWh)"
                                             name="batteryCapacity"
                                             type="number"
-                                            placeholder="e.g. 60"
-                                            min="10" max="200"
+                                            placeholder="1–200 kWh (scooter–car)"
+                                            min="1" max="200"
                                             value={formData.batteryCapacity}
                                             onChange={handleInputChange}
                                         />
