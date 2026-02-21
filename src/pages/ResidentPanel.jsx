@@ -11,7 +11,7 @@ import './ResidentPanel.css';
 const API = 'http://localhost:5000/api';
 
 const ResidentPanel = () => {
-    const { submissionResult } = useGrid();
+    const { submissionResult, requestNotificationPermission, sendBrowserNotification } = useGrid();
     const [formData, setFormData] = useState({
         vehicleId: '',
         currentBattery: '',
@@ -30,6 +30,11 @@ const ResidentPanel = () => {
     // Progress tracking
     const [progress, setProgress] = useState(0);
     const [statusLabel, setStatusLabel] = useState('Scheduled');
+
+    // Initialize notifications
+    React.useEffect(() => {
+        requestNotificationPermission();
+    }, []);
 
     React.useEffect(() => {
         if (!schedule) return;
@@ -62,8 +67,10 @@ const ResidentPanel = () => {
         let v = value;
         if (name === 'currentBattery' || name === 'targetBattery') {
             const n = parseInt(value, 10);
-            if (n > 100) v = '100'; else if (n < 0) v = '0';
+            if (value !== '' && (isNaN(n) || n < 0 || n > 100)) return;
+            v = value;
         }
+
         setFormData(prev => ({ ...prev, [name]: v }));
     };
 
@@ -108,7 +115,7 @@ const ResidentPanel = () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                vehicle_id: formData.vehicleId || 'EV-USER',
+                vehicle_id: formData.vehicleId,
                 current_battery: parseFloat(formData.currentBattery),
                 target_battery: parseFloat(formData.targetBattery),
                 battery_capacity: parseFloat(formData.batteryCapacity),
@@ -120,9 +127,27 @@ const ResidentPanel = () => {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Booking failed');
+
+        // not_feasible comes back as 200 with status field
+        if (data.status === 'not_feasible') {
+            setErrorMsg(data.schedule?.warning || data.message || 'Charging not feasible before departure.');
+            setRequestStatus('error');
+            setSuggestions([]);
+            return;
+        }
+
+        // Save request ID to localStorage for status change tracking
+        if (data.request_id) {
+            const myRequests = JSON.parse(localStorage.getItem('my_gridwise_requests') || '[]');
+            localStorage.setItem('my_gridwise_requests', JSON.stringify([...new Set([...myRequests, data.request_id])]));
+        }
+
         setSchedule(data.schedule);
         setRequestStatus('scheduled');
         setSuggestions([]);
+
+        // Initial confirmation notification
+        sendBrowserNotification("GridWise ⚡", `Charging scheduled for ${formData.vehicleId}!`);
     };
 
     const handleDismissSuggestions = () => {
@@ -271,18 +296,25 @@ const ResidentPanel = () => {
                                             <div className="detail-item"><span className="label">Duration</span><span className="value">{schedule.duration}</span></div>
                                         </div>
 
-                                        {/* Partial charge warning */}
-                                        {schedule.partialCharge && (
-                                            <div style={{
-                                                margin: '12px 0', padding: '10px 14px',
-                                                background: '#fffbeb', border: '1px solid #fcd34d',
-                                                borderRadius: 10, display: 'flex', gap: 10, alignItems: 'flex-start'
-                                            }}>
-                                                <AlertTriangle size={18} style={{ color: '#d97706', flexShrink: 0, marginTop: 2 }} />
-                                                <div style={{ fontSize: '0.82rem', color: '#92400e' }}>
-                                                    <strong>Partial charge only</strong> — not enough time before departure.<br />
-                                                    Battery will reach <strong>~{schedule.achievableBattery}%</strong> by your departure time.
-                                                    Consider DC Fast Charge or extending your departure window.
+                                        {/* ✔ Confirmation — full charge fits before departure */}
+                                        {schedule.confirmation && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0', color: '#16a34a', fontSize: '0.84rem', fontWeight: 600 }}>
+                                                <CheckCircle2 size={16} />
+                                                {schedule.confirmation}
+                                            </div>
+                                        )}
+
+                                        {/* ⚠ Partial charge warning */}
+                                        {schedule.partialCharge && schedule.warning && (
+                                            <div style={{ margin: '10px 0', padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 10, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                                <AlertTriangle size={17} style={{ color: '#d97706', flexShrink: 0, marginTop: 2 }} />
+                                                <div style={{ fontSize: '0.81rem', color: '#92400e' }}>
+                                                    <strong>Partial charge only</strong> — {schedule.warning}
+                                                    {schedule.fastChargeOption && (
+                                                        <div style={{ marginTop: 4, color: '#1d4ed8', fontWeight: 600 }}>
+                                                            ⚡ DC Fast Charge option: {schedule.fastChargeOption.duration} → {schedule.fastChargeOption.achievable}%
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}

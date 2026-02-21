@@ -3,9 +3,11 @@ from flask_cors import CORS
 from database.db import db
 from api.routes import api
 import os
+import threading
+import time
 
 app = Flask(__name__)
-CORS(app) # Enable CORS for frontend
+CORS(app)
 
 # Configure SQLite
 if os.environ.get('FLASK_ENV') == 'testing':
@@ -20,9 +22,74 @@ db.init_app(app)
 # Register Blueprints
 app.register_blueprint(api, url_prefix='/api')
 
+
+# ── Background Notification Worker ──────────────────────────────────────────
+def _notification_worker():
+    """
+    Daemon thread — polls every 30 s.
+    Fires WhatsApp/SMS for:
+      Event 2 — Charging Started  (when start_time <= now < end_time)
+      Event 3 — Charging Completed (when end_time <= now)
+    Uses sms_notified column to prevent duplicates.
+    """
+    time.sleep(10)  # give Flask a moment to start
+
+    from engine.sms_service import WhatsAppService
+    from database.models import ChargingAllocation, ChargingRequest
+    from datetime import datetime, timedelta
+
+    IST = timedelta(hours=5, minutes=30)
+
+    while True:
+        try:
+            with app.app_context():
+                now = datetime.utcnow()
+
+                # Check all scheduled requests
+                reqs = ChargingRequest.query.filter(
+                    ChargingRequest.status == 'scheduled',
+                ).all()
+
+                for req in reqs:
+                    alloc = req.allocation
+                    if not alloc:
+                        continue
+
+                    changed = False
+
+                    # Status Transition: Scheduled -> Charging
+                    if (alloc.status == 'Scheduled' 
+                            and alloc.allocated_start_time <= now
+                            and alloc.allocated_end_time > now):
+                        alloc.status = 'Charging'
+                        changed = True
+                        print(f"[Worker] {req.vehicle_id} started charging.")
+
+                    # Status Transition: Scheduled/Charging -> Completed
+                    if (alloc.status in ['Scheduled', 'Charging'] 
+                            and alloc.allocated_end_time <= now):
+                        alloc.status = 'Completed'
+                        req.status = 'completed'
+                        changed = True
+                        print(f"[Worker] {req.vehicle_id} completed charging.")
+
+                    if changed:
+                        db.session.commit()
+
+        except Exception as exc:
+            print(f'[Notify Worker] Error: {exc}')
+
+        time.sleep(30)
+
+
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all() # Create tables
-        print("Database initialized.")
-    
+        db.create_all()
+        print('Database initialized.')
+
+    if os.environ.get('FLASK_ENV') != 'testing':
+        t = threading.Thread(target=_notification_worker, daemon=True, name='notify-worker')
+        t.start()
+        print('[Notify] Background worker started (30s polling).')
+
     app.run(debug=True, port=5000)

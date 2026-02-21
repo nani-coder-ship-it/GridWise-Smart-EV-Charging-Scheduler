@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const GridContext = createContext();
 
@@ -21,6 +21,43 @@ export const GridProvider = ({ children }) => {
     const [submissionResult, setSubmissionResult] = useState(null);
 
     const [logs, setLogs] = useState([]);
+
+    // ── Browser Notifications ─────────────────────────────────────────────
+    const [notifiedRequestIds, setNotifiedRequestIds] = useState(new Set());
+
+    const requestNotificationPermission = () => {
+        if ("Notification" in window && Notification.permission === "default") {
+            Notification.requestPermission();
+        }
+    };
+
+    const sendBrowserNotification = (title, body) => {
+        if ("Notification" in window && Notification.permission === "granted") {
+            new Notification(title, { body, icon: "/favicon.ico" });
+        }
+    };
+
+    // Track status transitions for notifications
+    useEffect(() => {
+        if (!sessions || sessions.length === 0) return;
+
+        sessions.forEach(session => {
+            const key = `${session.id}-${session.status}`;
+            if (!notifiedRequestIds.has(key)) {
+                // If it's a known request from this session's localStorage, notify
+                const myRequests = JSON.parse(localStorage.getItem('my_gridwise_requests') || '[]');
+                if (myRequests.includes(session.request_id)) {
+                    if (session.status === 'Charging') {
+                        sendBrowserNotification("GridWise ⚡", `Charging started for ${session.vehicle_id}!`);
+                        setNotifiedRequestIds(prev => new Set(prev).add(key));
+                    } else if (session.status === 'Completed') {
+                        sendBrowserNotification("GridWise ⚡", `Charging complete for ${session.vehicle_id}!`);
+                        setNotifiedRequestIds(prev => new Set(prev).add(key));
+                    }
+                }
+            }
+        });
+    }, [sessions]);
 
     // API Service Layer (Internal)
     const fetchGridStatus = async () => {
@@ -120,6 +157,12 @@ export const GridProvider = ({ children }) => {
             const data = await response.json();
 
             if (data.status === 'success' || data.status === 'scheduled') {
+                // Store request ID in localStorage so we can track status for notifications
+                if (data.request_id) {
+                    const myRequests = JSON.parse(localStorage.getItem('my_gridwise_requests') || '[]');
+                    localStorage.setItem('my_gridwise_requests', JSON.stringify([...new Set([...myRequests, data.request_id])]));
+                }
+
                 // Refresh all data immediately
                 await refreshData();
                 setSubmissionResult({ success: true, schedule: data.schedule, insight: data.insight });
@@ -139,9 +182,10 @@ export const GridProvider = ({ children }) => {
             historyData,
             logs,
             addRequest,
-            submissionResult, // Exposed for persistence
-            setSubmissionResult, // Exposed to clear it
-            refreshData // Exposed for manual refresh
+            submissionResult, setSubmissionResult,
+            refreshData,
+            requestNotificationPermission,
+            sendBrowserNotification
         }}>
             {children}
         </GridContext.Provider>

@@ -6,6 +6,7 @@ from engine.scheduler import Scheduler
 from engine.insights import InsightsGenerator
 from engine.grid_manager import GridLoadManager
 from engine.slot_suggester import SlotSuggester
+from engine.sms_service import WhatsAppService
 
 api = Blueprint('api', __name__)
 scheduler = Scheduler()
@@ -63,162 +64,203 @@ def suggest_slots():
 @api.route('/schedule', methods=['POST'])
 def schedule_charging():
     data = request.json
-    
-    # Input Validation
+
+    # ── Input validation ────────────────────────────────────────────────────
     required_fields = ['vehicle_id', 'current_battery', 'target_battery', 'departure_time', 'priority']
     missing_fields = [field for field in required_fields if field not in data]
     if missing_fields:
         return jsonify({'error': f"Missing required fields: {', '.join(missing_fields)}"}), 400
 
     try:
-        # Validate data types and logic
-        current_battery = float(data['current_battery'])
-        target_battery = float(data['target_battery'])
+        current_battery  = float(data['current_battery'])
+        target_battery   = float(data['target_battery'])
         if not (0 <= current_battery <= 100) or not (0 <= target_battery <= 100):
-             return jsonify({'error': "Battery percentage must be between 0 and 100"}), 400
+            return jsonify({'error': 'Battery percentage must be between 0 and 100'}), 400
         if current_battery >= target_battery:
-             return jsonify({'error': "Target battery must be greater than current battery"}), 400
-             
-        # Normalize to UTC aware datetime
-        departure_time = datetime.fromisoformat(data['departure_time'].replace('Z', '+00:00'))
-        current_utc = datetime.now(timezone.utc)
-        
-        print(f"DEBUG: Departure: {departure_time}, Current UTC: {current_utc}")
+            return jsonify({'error': 'Target battery must be greater than current battery'}), 400
 
-        # Compare with current UTC time (aware)
-        if departure_time <= current_utc:
-            print(f"DEBUG: ERROR! Departure {departure_time} <= Current {current_utc}")
-            return jsonify({'error': "Departure time must be in the future"}), 400
-
-        # ADMISSION CONTROL: Check Grid Stress
-        # Get current load estimate (Base + Active)
-        # For simplicity, we can fetch from grid_manager if we moved load calc there, 
-        # or re-calculate briefly here. 
-        # Let's call a helper or just check base load + active count * 3 (approx) for speed.
-        now = datetime.utcnow()
-        active_count = ChargingAllocation.query.filter(
-            ChargingAllocation.allocated_start_time <= now,
-            ChargingAllocation.allocated_end_time >= now
-        ).count()
-        base_load = grid_manager.get_base_load(now)
-        current_load_est = base_load + (active_count * 30.0) # Using 30kW as DC worst case or 7kW average? 
-        # Let's use a safer estimate: query sum of power.
-        active_power = db.session.query(db.func.sum(ChargingAllocation.charger_power_kw)).filter(
-            ChargingAllocation.allocated_start_time <= now,
-            ChargingAllocation.allocated_end_time >= now
-        ).scalar() or 0
-        
-        total_load_check = base_load + active_power
-        
-        if grid_manager.check_protection_rules(total_load_check) == 'RESTRICT':
-            if data['priority'] != 'emergency':
-                # Log rejection
-                scheduler.log_system_action('ERROR', f"Rejected request derived from {data['vehicle_id']} due to GRID EMERGENCY.", 'RESTRICT')
-                return jsonify({'error': "Grid in Emergency Mode. Only Emergency requests accepted."}), 503
-
-        # Remove any existing active request for this vehicle (Prevent Duplicates)
-        existing_req = ChargingRequest.query.filter_by(vehicle_id=data['vehicle_id']).filter(
-            ChargingRequest.status.in_(['pending', 'scheduled'])
-        ).first()
-        
-        if existing_req:
-            if existing_req.allocation:
-                db.session.delete(existing_req.allocation)
-            db.session.delete(existing_req)
-            db.session.flush() # Ensure delete is processed before adding new
-
-        # Validate battery capacity range (1–200 kWh, covering scooters to large cars)
         battery_capacity = float(data.get('battery_capacity', 60.0))
         if not (1 <= battery_capacity <= 200):
             return jsonify({'error': 'Battery capacity must be between 1 and 200 kWh'}), 400
 
-        # Create Request Record
+        charger_type     = data.get('charger_type', 'AC').upper()
+        priority         = data.get('priority', 'normal')
+
+        # ── Time handling ───────────────────────────────────────────────────
+        departure_time   = datetime.fromisoformat(data['departure_time'].replace('Z', '+00:00'))
+        current_utc_aware = datetime.now(timezone.utc)
+        # UTC-naive for all engine comparisons (SQLite stores naive)
+        departure_naive  = departure_time.replace(tzinfo=None)
+        now_naive        = datetime.utcnow()
+
+        print(f"DEBUG: Departure: {departure_naive}, Now UTC: {now_naive}")
+
+        if departure_naive <= now_naive:
+            print(f"DEBUG: ERROR! Departure {departure_naive} <= Now {now_naive}")
+            return jsonify({'error': 'Departure time must be in the future'}), 400
+
+        # ── Pre-flight feasibility calc ─────────────────────────────────────
+        power_kw          = 50.0 if charger_type == 'DC' else 7.2
+        fast_power_kw     = 50.0  # DC fast charger baseline
+        required_kwh      = (target_battery - current_battery) / 100.0 * battery_capacity
+        full_duration_h   = required_kwh / power_kw          # time needed at requested charger
+        fast_duration_h   = required_kwh / fast_power_kw     # time needed at DC fast charge
+        available_h       = (departure_naive - now_naive).total_seconds() / 3600
+        is_partial        = full_duration_h > available_h    # can't fully charge before departure
+        not_feasible_fast = fast_duration_h > available_h    # even DC fast charge can't finish
+
+        # ISO helper – all times returned with Z so JS parses as UTC
+        def iso_utc(dt):
+            return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        # If even DC fast-charge can't finish before departure, return structured response
+        if not_feasible_fast and priority != 'emergency':
+            earliest_completion = now_naive + timedelta(hours=full_duration_h)
+            return jsonify({
+                'status': 'not_feasible',
+                'message': 'Charging cannot be completed before departure even with DC fast charging.',
+                'schedule': {
+                    'partialCharge': True,
+                    'achievableBattery': round(
+                        current_battery + (available_h / full_duration_h) * (target_battery - current_battery)
+                    ) if full_duration_h > 0 else current_battery,
+                    'warning': (
+                        f"Insufficient time before departure. "
+                        f"Even DC Fast Charge needs {int(fast_duration_h)}h {int((fast_duration_h % 1)*60)}m "
+                        f"but you only have {int(available_h)}h {int((available_h % 1)*60)}m."
+                    ),
+                    'earliestCompletionTime': iso_utc(earliest_completion),
+                    'fastChargeOption': {
+                        'chargerType': 'DC',
+                        'duration': f"{int(fast_duration_h)}h {int((fast_duration_h % 1)*60)}m",
+                        'achievable': int(target_battery)
+                    },
+                    'confirmation': None
+                }
+            }), 200
+
+        # ── Auto-sweep stale sessions (prevents load inflation) ──────────────
+        now = datetime.utcnow()
+        overdue = ChargingAllocation.query.filter(
+            ChargingAllocation.allocated_end_time < now,
+            ChargingAllocation.status.in_(['Scheduled', 'Charging'])
+        ).all()
+        for a in overdue:
+            a.status = 'Completed'
+            if a.request and a.request.status == 'scheduled':
+                a.request.status = 'completed'
+        if overdue:
+            db.session.flush()
+
+        # ── Grid admission control ───────────────────────────────────────────
+        base_load = grid_manager.get_base_load(now)
+        active_power = db.session.query(db.func.sum(ChargingAllocation.charger_power_kw)).filter(
+            ChargingAllocation.allocated_start_time <= now,
+            ChargingAllocation.allocated_end_time   >  now,
+            ChargingAllocation.status.in_(['Scheduled', 'Charging'])
+        ).scalar() or 0
+        new_power_kw = 50.0 if charger_type == 'DC' else 7.2
+        projected    = base_load + active_power + new_power_kw
+        if grid_manager.check_protection_rules(projected) == 'RESTRICT':
+            if priority != 'emergency':
+                scheduler.log_system_action('ERROR',
+                    f"Rejected {data['vehicle_id']} — Grid Emergency (projected {projected:.1f} kW).", 'RESTRICT')
+                return jsonify({'error': 'Grid in Emergency Mode. Only Emergency requests accepted.'}), 503
+
+        # ── Remove duplicate active request for same vehicle ─────────────────
+        existing_req = ChargingRequest.query.filter_by(vehicle_id=data['vehicle_id']).filter(
+            ChargingRequest.status.in_(['pending', 'scheduled'])
+        ).first()
+        if existing_req:
+            if existing_req.allocation:
+                db.session.delete(existing_req.allocation)
+            db.session.delete(existing_req)
+            db.session.flush()
+
+        # ── Create request record ────────────────────────────────────────────
         req = ChargingRequest(
             vehicle_id=data['vehicle_id'],
             current_battery_percent=current_battery,
             target_battery_percent=target_battery,
             battery_capacity_kwh=battery_capacity,
-            departure_time=departure_time,
-            priority_level=data['priority'],
-            charger_type=data.get('charger_type', 'AC'), # New field
-            required_kwh=0, # Calculated below
-            estimated_duration_minutes=0
+            departure_time=departure_naive,
+            priority_level=priority,
+            charger_type=charger_type,
+            required_kwh=required_kwh,
+            estimated_duration_minutes=int(full_duration_h * 60),
         )
-        
-        # Pre-calculate for DB record
-        req.required_kwh = (req.target_battery_percent - req.current_battery_percent) / 100.0 * req.battery_capacity_kwh
-        req.estimated_duration_minutes = (req.required_kwh / 7.2) * 60
-        
         db.session.add(req)
-        db.session.flush() # Generate ID but don't commit yet to avoid zombie requests if scheduling fails
-        
-        # 3b. If caller supplied a preferred slot (from slot suggestion), use it directly
+        db.session.flush()   # get req.id before scheduling
+
+        # ── Run Scheduler ────────────────────────────────────────────────────
         preferred_slot = data.get('preferred_slot')
-        if preferred_slot:
-            req.status = 'scheduled'
-        # Run Scheduler (will respect preferred_slot inside)
         allocation = scheduler.schedule_request(req, preferred_start=preferred_slot)
         db.session.add(allocation)
         req.status = 'scheduled'
-        
-        # Commit everything as a single transaction
         db.session.commit()
-        
-        # Calculate duration for response
-        duration_delta = allocation.allocated_end_time - allocation.allocated_start_time
-        duration_hours_float = duration_delta.total_seconds() / 3600
-        duration_hours_int = int(duration_hours_float)
-        duration_minutes_int = int((duration_hours_float * 60) % 60)
 
-        # Generate Insight (Post-commit as it doesn't affect DB integrity usually, but could be inside if critical)
-        insight = InsightsGenerator.generate_insight(req, allocation)
-        
-        # Format times as UTC ISO with Z suffix so JS parses as UTC correctly
-        def iso_utc(dt):
-            """Return UTC ISO-8601 string with Z suffix regardless of tzinfo."""
-            return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        db.session.commit()
 
-        # Detect partial charge (window was too short for full charge)
-        full_duration_h = ((req.target_battery_percent - req.current_battery_percent)
-                           / 100.0 * req.battery_capacity_kwh) / (
-                           50.0 if req.charger_type == 'DC' else 7.2)
         actual_duration_h = (allocation.allocated_end_time - allocation.allocated_start_time
                              ).total_seconds() / 3600
-        is_partial = actual_duration_h < full_duration_h * 0.98  # 2% tolerance
+        dur_h_int = int(actual_duration_h)
+        dur_m_int = int((actual_duration_h * 60) % 60)
+
+        # Partial charge: scheduled duration < full needed duration (2% tolerance)
+        actual_is_partial = actual_duration_h < full_duration_h * 0.98
         achievable_pct = round(
-            req.current_battery_percent + (actual_duration_h / full_duration_h) *
-            (req.target_battery_percent - req.current_battery_percent)
-        ) if is_partial else req.target_battery_percent
+            current_battery + (actual_duration_h / full_duration_h) *
+            (target_battery - current_battery)
+        ) if actual_is_partial and full_duration_h > 0 else int(target_battery)
+
+        # Confirm or warn
+        if actual_is_partial:
+            confirmation = None
+            fast_option = {
+                'chargerType': 'DC',
+                'duration': f"{int(fast_duration_h)}h {int((fast_duration_h % 1)*60)}m",
+                'achievable': int(target_battery)
+            } if charger_type != 'DC' else None
+            warning_msg = (
+                f"Not enough time for full charge. Battery will reach ~{achievable_pct}% "
+                f"by departure. Consider DC Fast Charge ({int(fast_duration_h)}h "
+                f"{int((fast_duration_h % 1)*60)}m for 100%)."
+            )
+        else:
+            confirmation = '\u2714 Charging will complete before your departure.'
+            fast_option  = None
+            warning_msg  = None
+
+        insight = InsightsGenerator.generate_insight(req, allocation)
 
         return jsonify({
             'status': 'success',
             'request_id': req.id,
             'schedule': {
-                'startTime':  iso_utc(allocation.allocated_start_time),
-                'endTime':    iso_utc(allocation.allocated_end_time),
-                'duration':   f"{duration_hours_int}h {duration_minutes_int}m",
-                'cost':       f"₹{allocation.estimated_cost}",
-                'savings':    f"₹{allocation.cost_without_optimization - allocation.estimated_cost:.2f}",
-                'load':       'Optimized' if allocation.peak_optimized else 'Standard',
-                'carbonReduced': f"{allocation.carbon_savings_kg} kg CO₂",
-                'isOffPeak':  allocation.peak_optimized,
-                'partialCharge': is_partial,
+                'startTime':         iso_utc(allocation.allocated_start_time),
+                'endTime':           iso_utc(allocation.allocated_end_time),
+                'duration':          f"{dur_h_int}h {dur_m_int}m",
+                'cost':              f'\u20b9{allocation.estimated_cost}',
+                'savings':           f'\u20b9{allocation.cost_without_optimization - allocation.estimated_cost:.2f}',
+                'load':              'Optimized' if allocation.peak_optimized else 'Standard',
+                'carbonReduced':     f'{allocation.carbon_savings_kg} kg CO\u2082',
+                'isOffPeak':         allocation.peak_optimized,
+                # ── New fields ─────────────────────────────────────────────
+                'partialCharge':     actual_is_partial,
                 'achievableBattery': achievable_pct,
-                'warning': (
-                    f"Insufficient time for full charge. Will reach ~{achievable_pct}% by departure."
-                    if is_partial else None
-                )
+                'confirmation':      confirmation,
+                'warning':           warning_msg,
+                'fastChargeOption':  fast_option,
             },
             'insight': insight
         })
 
     except ValueError as ve:
-        return jsonify({'error': f"Invalid data format: {str(ve)}"}), 400
+        return jsonify({'error': f'Invalid data format: {str(ve)}'}), 400
     except Exception as e:
-        db.session.rollback() # Rollback changes if anything fails
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e), 'message': f"Scheduling Failed: {str(e)}"}), 500
+        db.session.rollback()
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e), 'message': f'Scheduling Failed: {str(e)}'}), 500
 
 @api.route('/active-schedule', methods=['GET'])
 def get_active_schedule():

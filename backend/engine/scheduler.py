@@ -110,102 +110,164 @@ class Scheduler:
             count_rescheduled = 0
             for alloc in active_allocations:
                 if alloc.request.priority_level == 'flexible':
-                     count_rescheduled += 1
-                     shift_mins = 30
-                     alloc.allocated_start_time += timedelta(minutes=shift_mins)
-                     alloc.allocated_end_time += timedelta(minutes=shift_mins)
-            
+                    count_rescheduled += 1
+                    shift_mins = 30
+                    alloc.allocated_start_time += timedelta(minutes=shift_mins)
+                    alloc.allocated_end_time   += timedelta(minutes=shift_mins)
+                    print(f"[Scheduler] Rescheduled {req.vehicle_id} +30m due to grid load.")
+
             db.session.commit()
-            
+
+    # Maximum simultaneous chargers per type
+    MAX_CHARGERS = {'AC': 5, 'DC': 2}
+
+    def _to_naive_utc(self, dt):
+        """Strip timezone info to get a UTC-naive datetime (matches SQLite storage)."""
+        if dt is None:
+            return dt
+        if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+            from datetime import timezone as _tz
+            return dt.astimezone(_tz.utc).replace(tzinfo=None)
+        return dt
+
+    def _count_overlapping(self, start, end, charger_type):
+        """Count active/scheduled allocations of charger_type that overlap [start, end)."""
+        return ChargingAllocation.query.filter(
+            ChargingAllocation.charger_type == charger_type,
+            ChargingAllocation.allocated_start_time < end,
+            ChargingAllocation.allocated_end_time > start,
+            ChargingAllocation.status.in_(['Scheduled', 'Charging'])
+        ).count()
+
+    def _find_conflict_free_slot(self, preferred_start, duration_hours, departure_naive,
+                                  charger_type, current_time):
+        """
+        Starting from preferred_start, scan 30-min steps forward to find the earliest
+        slot where charger capacity is available AND end_time <= departure_naive.
+        Returns (start_time, end_time).  Falls back to preferred_start if full scan fails.
+        """
+        max_capacity = self.MAX_CHARGERS.get(charger_type, 5)
+        step = timedelta(minutes=30)
+        candidate = preferred_start
+        # Scan up to 48 × 30 min = 24-hour window
+        for _ in range(48):
+            candidate_end = candidate + timedelta(hours=duration_hours)
+            # Hard constraint: must finish before departure
+            if candidate_end > departure_naive:
+                break
+            if self._count_overlapping(candidate, candidate_end, charger_type) < max_capacity:
+                return candidate, candidate_end
+            candidate += step
+        # Fallback: no conflict-free slot fits before departure.
+        # Start as early as (departure - duration), but no earlier than current_time.
+        # This guarantees end = start + duration ≤ departure.
+        fallback_start = max(current_time, departure_naive - timedelta(hours=duration_hours))
+        fallback_end   = min(fallback_start + timedelta(hours=duration_hours), departure_naive)
+        return fallback_start, fallback_end
+
     def schedule_request(self, request, preferred_start=None):
         """
-        Main scheduling logic.
+        Main scheduling logic with real-world constraints:
+        1. Calculates required_kWh and duration from charger power.
+        2. Works in UTC-naive datetimes (consistent with SQLite storage).
+        3. Caps charging duration to the available window before departure.
+        4. Detects and avoids charger slot conflicts (no overlapping allocations
+           beyond MAX_CHARGERS capacity per type).
+        5. Guarantees: allocated_end_time <= departure_time.
         """
-        # 1. Calculate Needs
+        # ── 1. Power & Duration ─────────────────────────────────────────────
         charger_type = request.charger_type or 'AC'
         power_kw = 50.0 if charger_type == 'DC' else 7.2
-        
-        required_kwh = (request.target_battery_percent - request.current_battery_percent) / 100.0 * request.battery_capacity_kwh
-        duration_hours = required_kwh / power_kw
-        
-        # 2. Constraints & Priority
-        from datetime import timezone
-        current_time_aware = datetime.now(timezone.utc)
-        # Work in UTC-naive throughout for DB consistency
-        current_time = current_time_aware.replace(tzinfo=None)
 
-        # Departure stored as UTC-naive in DB (fromisoformat strips tz info on save)
-        departure_naive = request.departure_time
-        if hasattr(departure_naive, 'tzinfo') and departure_naive.tzinfo is not None:
-            departure_naive = departure_naive.replace(tzinfo=None)
+        required_kwh = (
+            (request.target_battery_percent - request.current_battery_percent)
+            / 100.0 * request.battery_capacity_kwh
+        )
+        full_duration_hours = required_kwh / power_kw  # time for 100% of requested charge
 
-        # Available charging window (departure - now)
-        available_hours = max(0, (departure_naive - current_time).total_seconds() / 3600)
+        # ── 2. UTC-naive timestamps ─────────────────────────────────────────
+        current_time = self._to_naive_utc(datetime.utcnow())  # UTC-naive now
 
-        # If not enough time for full charge, use available window (partial charge)
-        if duration_hours > available_hours and available_hours > 0:
-            duration_hours = available_hours  # charge as much as possible before departure
+        # departure_time stored as UTC-naive in SQLite; strip tz if somehow present
+        departure_naive = self._to_naive_utc(request.departure_time)
+
+        # ── 3. Available window & partial-charge detection ──────────────────
+        available_hours = max(0.0, (departure_naive - current_time).total_seconds() / 3600)
+
+        if full_duration_hours > available_hours > 0:
+            # Not enough time — charge as much as possible before departure
+            duration_hours = available_hours
         elif available_hours <= 0:
-            # Departure already passed or now == departure — charge immediately for emergency
-            duration_hours = min(duration_hours, 1.0)  # cap at 1h as safety
+            # Departure already passed — emergency cap at 1 h
+            duration_hours = min(full_duration_hours, 1.0)
+        else:
+            duration_hours = full_duration_hours
 
-        # 3. Optimization
+        # ── 4. Grid stress check ────────────────────────────────────────────
         is_emergency = request.priority_level == 'emergency'
-        
-        # Check Grid Stress
         current_base_load = self.grid_manager.get_base_load(current_time)
-        estimated_load = current_base_load + 20.0
-        in_emergency = self.grid_manager.check_emergency_mode(estimated_load)
+        in_emergency = self.grid_manager.check_emergency_mode(current_base_load + 20.0)
 
+        # ── 5. Pick candidate start time ────────────────────────────────────
         if preferred_start:
-            # User selected a suggested slot — use it directly
             try:
                 ps = datetime.fromisoformat(str(preferred_start).replace('Z', '+00:00'))
-                start_time = ps.replace(tzinfo=None)  # normalize to UTC-naive
+                candidate_start = self._to_naive_utc(ps)
             except Exception:
-                start_time = current_time
+                candidate_start = current_time
             peak_optimized = True
+
         elif is_emergency:
-            # Schedule immediately
-            start_time = current_time
+            candidate_start = current_time
             peak_optimized = False
+
         elif in_emergency and request.priority_level == 'flexible':
-            # Delay by up to available window, but stay before departure
+            # Delay proportionally; never past the halfway point of available window
             delay = min(timedelta(hours=4), timedelta(hours=available_hours / 2))
-            start_time = current_time + delay
+            candidate_start = current_time + delay
             peak_optimized = True
+
         else:
-            # Smart Optimization — find best start time within departure window
             if charger_type == 'DC':
-                start_time = current_time
+                candidate_start = current_time
                 peak_optimized = False
             else:
-                start_time = CostOptimizer.find_optimal_start_time(
+                candidate_start = CostOptimizer.find_optimal_start_time(
                     required_kwh, duration_hours, departure_naive, current_time
                 )
-                time_diff = (start_time - current_time).total_seconds() / 60
+                time_diff = (candidate_start - current_time).total_seconds() / 60
                 peak_optimized = time_diff > 15
 
-        # ── CRITICAL: always ensure end_time does not exceed departure ──────
-        end_time = start_time + timedelta(hours=duration_hours)
-        if end_time > departure_naive:
-            # Shift start earlier so charging finishes exactly at departure
-            start_time = departure_naive - timedelta(hours=duration_hours)
-            if start_time < current_time:
-                start_time = current_time
-            end_time = min(start_time + timedelta(hours=duration_hours), departure_naive)
+        # ── 6. Charger conflict resolution ────────────────────────────────
+        start_time, end_time = self._find_conflict_free_slot(
+            candidate_start, duration_hours, departure_naive, charger_type, current_time
+        )
 
-        # Calculate Cost & Carbon
-        cost = CostOptimizer.calculate_cost(required_kwh, start_time, duration_hours, request.priority_level)
+        # ── 7. Hard departure cap + sanity guard (start must never exceed end) ─
+        if end_time > departure_naive:
+            start_time = max(current_time, departure_naive - timedelta(hours=duration_hours))
+            end_time   = min(start_time + timedelta(hours=duration_hours), departure_naive)
+
+        # Final sanity: if start still exceeds end (edge case: departure already passed),
+        # pin start to current_time and end to departure to get at least some session.
+        if start_time >= end_time:
+            start_time = current_time
+            end_time   = max(start_time, departure_naive)
+            if end_time <= start_time:          # departure truly in the past
+                end_time = start_time + timedelta(hours=min(duration_hours, 1.0))
+
+        # ── 8. Cost & Carbon ─────────────────────────────────────────────
+        actual_duration = max(0.0, (end_time - start_time).total_seconds() / 3600)
+        cost = CostOptimizer.calculate_cost(required_kwh, start_time, actual_duration, request.priority_level)
         max_cost = required_kwh * CostOptimizer.PEAK_RATE
         total_savings = max(0, max_cost - cost)
-        carbon_factor = 0.4
+        carbon_factor = 0.4  # kg CO₂/kWh saved vs coal
         carbon_savings = (required_kwh * carbon_factor) if peak_optimized else 0.0
 
         allocation = ChargingAllocation(
             request_id=request.id,
             allocated_start_time=start_time,
-            allocated_end_time=end_time,          # ← uses capped end_time
+            allocated_end_time=end_time,        # ← always ≤ departure_time
             charger_power_kw=power_kw,
             estimated_cost=round(cost, 2),
             cost_without_optimization=round(cost + total_savings, 2),

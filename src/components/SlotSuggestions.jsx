@@ -129,13 +129,16 @@ const SlotCard = ({ slot, onSelect, booking }) => {
 const SlotSuggestions = ({ suggestions, onBook, onDismiss, loading }) => {
     const [booking, setBooking] = React.useState(null);
     const [booked, setBooked] = React.useState(null);
+    const [bookingError, setBookingError] = React.useState(null);
 
     const handleSelect = async (slot) => {
         setBooking(slot.start);
+        setBookingError(null);
         try {
             await onBook(slot);
             setBooked(slot);
-        } catch {
+        } catch (err) {
+            setBookingError(err.message || 'Booking failed. Please try again.');
             setBooking(null);
         }
     };
