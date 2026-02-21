@@ -6,6 +6,7 @@ const Sessions = ({ sessions }) => {
     const [completedSessions, setCompletedSessions] = useState([]);
     const [loadingCompleted, setLoadingCompleted] = useState(false);
     const [deletingId, setDeletingId] = useState(null);
+    const [clearingAll, setClearingAll] = useState(false);
     const [toast, setToast] = useState(null);
 
     // Fetch completed sessions
@@ -50,7 +51,27 @@ const Sessions = ({ sessions }) => {
 
     const showToast = (msg, isError = false) => {
         setToast({ msg, isError });
-        setTimeout(() => setToast(null), 3000);
+        setTimeout(() => setToast(null), 3500);
+    };
+
+    const handleDeleteAll = async () => {
+        if (completedSessions.length === 0) return;
+        if (!window.confirm(`Remove all ${completedSessions.length} completed sessions? This cannot be undone.`)) return;
+        setClearingAll(true);
+        try {
+            const res = await fetch('http://localhost:5000/api/completed-sessions/all', { method: 'DELETE' });
+            const data = await res.json();
+            if (res.ok) {
+                setCompletedSessions([]);
+                showToast(`✓ Cleared ${data.deleted_count} completed session${data.deleted_count !== 1 ? 's' : ''}`);
+            } else {
+                showToast(`Error: ${data.error || 'Failed to clear'}`, true);
+            }
+        } catch {
+            showToast('Network error — could not clear sessions', true);
+        } finally {
+            setClearingAll(false);
+        }
     };
 
     const allSessions = [...(sessions || []), ...completedSessions];
@@ -163,11 +184,32 @@ const Sessions = ({ sessions }) => {
                 ))}
             </div>
 
-            {/* Helper text for completed tab */}
+            {/* Helper text + Clear All for completed tab */}
             {filter === 'Completed' && completedSessions.length > 0 && (
-                <p style={{ fontSize: '0.78rem', color: '#9ca3af', marginBottom: 12 }}>
-                    Completed sessions can be removed using the 🗑️ button. This also clears the original request from the system.
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                    <p style={{ fontSize: '0.78rem', color: '#9ca3af', margin: 0 }}>
+                        Use 🗑️ to remove individual sessions, or clear all at once.
+                    </p>
+                    <button
+                        onClick={handleDeleteAll}
+                        disabled={clearingAll || !!deletingId}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px',
+                            background: clearingAll ? '#fecaca' : '#ef4444',
+                            color: 'white', border: 'none', borderRadius: 8,
+                            fontSize: '0.8rem', fontWeight: 700,
+                            cursor: clearingAll ? 'wait' : 'pointer',
+                            transition: 'background 0.15s ease',
+                            boxShadow: '0 2px 8px rgba(239,68,68,0.3)',
+                        }}
+                        onMouseEnter={e => { if (!clearingAll) e.currentTarget.style.background = '#dc2626'; }}
+                        onMouseLeave={e => { if (!clearingAll) e.currentTarget.style.background = '#ef4444'; }}
+                    >
+                        <Trash2 size={14} />
+                        {clearingAll ? 'Clearing…' : `Clear All (${completedSessions.length})`}
+                    </button>
+                </div>
             )}
 
             {/* Table */}
@@ -193,7 +235,7 @@ const Sessions = ({ sessions }) => {
                                 </tr>
                             ) : filteredSessions.length > 0 ? filteredSessions.map((session, i) => (
                                 <tr key={session.id || i} style={{
-                                    opacity: deletingId === session.id ? 0.4 : 1,
+                                    opacity: (deletingId === session.id || clearingAll) ? 0.4 : 1,
                                     transition: 'opacity 0.2s'
                                 }}>
                                     <td style={{ fontWeight: 600, color: '#111827' }}>{session.vehicle_id}</td>
@@ -223,12 +265,12 @@ const Sessions = ({ sessions }) => {
                                         <td>
                                             <button
                                                 onClick={() => handleDelete(session)}
-                                                disabled={deletingId === session.id}
-                                                title="Remove completed session"
+                                                disabled={!!deletingId || clearingAll}
+                                                title="Remove this session"
                                                 style={{
                                                     background: 'none', border: '1px solid #fca5a5',
                                                     borderRadius: 7, padding: '5px 8px',
-                                                    cursor: deletingId === session.id ? 'wait' : 'pointer',
+                                                    cursor: (deletingId || clearingAll) ? 'wait' : 'pointer',
                                                     color: '#ef4444', display: 'flex', alignItems: 'center',
                                                     transition: 'all 0.15s ease'
                                                 }}

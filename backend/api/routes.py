@@ -278,6 +278,37 @@ def delete_session(allocation_id):
         return jsonify({'error': str(e)}), 500
 
 
+@api.route('/completed-sessions/all', methods=['DELETE'])
+def delete_all_completed_sessions():
+    """Delete ALL completed allocations and their orphaned parent requests."""
+    try:
+        now = datetime.utcnow()
+        completed = ChargingAllocation.query.filter(
+            ChargingAllocation.allocated_end_time <= now
+        ).all()
+
+        request_ids = {a.request_id for a in completed}
+
+        # Delete all completed allocations
+        for alloc in completed:
+            db.session.delete(alloc)
+        db.session.flush()
+
+        # Delete parent requests that now have no remaining allocations
+        for rid in request_ids:
+            remaining = ChargingAllocation.query.filter_by(request_id=rid).count()
+            if remaining == 0:
+                parent = ChargingRequest.query.get(rid)
+                if parent:
+                    db.session.delete(parent)
+
+        db.session.commit()
+        return jsonify({'success': True, 'deleted_count': len(completed)}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
 @api.route('/system/logs', methods=['GET'])
 def get_system_logs():
     # Return last 20 logs desc
