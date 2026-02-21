@@ -173,18 +173,41 @@ def schedule_charging():
         # Generate Insight (Post-commit as it doesn't affect DB integrity usually, but could be inside if critical)
         insight = InsightsGenerator.generate_insight(req, allocation)
         
+        # Format times as UTC ISO with Z suffix so JS parses as UTC correctly
+        def iso_utc(dt):
+            """Return UTC ISO-8601 string with Z suffix regardless of tzinfo."""
+            return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        # Detect partial charge (window was too short for full charge)
+        full_duration_h = ((req.target_battery_percent - req.current_battery_percent)
+                           / 100.0 * req.battery_capacity_kwh) / (
+                           50.0 if req.charger_type == 'DC' else 7.2)
+        actual_duration_h = (allocation.allocated_end_time - allocation.allocated_start_time
+                             ).total_seconds() / 3600
+        is_partial = actual_duration_h < full_duration_h * 0.98  # 2% tolerance
+        achievable_pct = round(
+            req.current_battery_percent + (actual_duration_h / full_duration_h) *
+            (req.target_battery_percent - req.current_battery_percent)
+        ) if is_partial else req.target_battery_percent
+
         return jsonify({
             'status': 'success',
             'request_id': req.id,
             'schedule': {
-                'startTime': allocation.allocated_start_time.isoformat(), # ISO format for frontend parsing
-                'endTime': allocation.allocated_end_time.isoformat(),
-                'duration': f"{duration_hours_int}h {duration_minutes_int}m",
-                'cost': f"₹{allocation.estimated_cost}",
-                'savings': f"₹{allocation.cost_without_optimization - allocation.estimated_cost:.2f}",
-                'load': 'Optimized' if allocation.peak_optimized else 'Standard',
+                'startTime':  iso_utc(allocation.allocated_start_time),
+                'endTime':    iso_utc(allocation.allocated_end_time),
+                'duration':   f"{duration_hours_int}h {duration_minutes_int}m",
+                'cost':       f"₹{allocation.estimated_cost}",
+                'savings':    f"₹{allocation.cost_without_optimization - allocation.estimated_cost:.2f}",
+                'load':       'Optimized' if allocation.peak_optimized else 'Standard',
                 'carbonReduced': f"{allocation.carbon_savings_kg} kg CO₂",
-                'isOffPeak': allocation.peak_optimized
+                'isOffPeak':  allocation.peak_optimized,
+                'partialCharge': is_partial,
+                'achievableBattery': achievable_pct,
+                'warning': (
+                    f"Insufficient time for full charge. Will reach ~{achievable_pct}% by departure."
+                    if is_partial else None
+                )
             },
             'insight': insight
         })

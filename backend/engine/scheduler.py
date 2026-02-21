@@ -130,29 +130,33 @@ class Scheduler:
         
         # 2. Constraints & Priority
         from datetime import timezone
-        current_time = datetime.now(timezone.utc)
-        # For simulation, let's assume 'now' is the request time
-        # In real app, we might schedule for future.
-        
+        current_time_aware = datetime.now(timezone.utc)
+        # Work in UTC-naive throughout for DB consistency
+        current_time = current_time_aware.replace(tzinfo=None)
+
+        # Departure stored as UTC-naive in DB (fromisoformat strips tz info on save)
+        departure_naive = request.departure_time
+        if hasattr(departure_naive, 'tzinfo') and departure_naive.tzinfo is not None:
+            departure_naive = departure_naive.replace(tzinfo=None)
+
+        # Available charging window (departure - now)
+        available_hours = max(0, (departure_naive - current_time).total_seconds() / 3600)
+
+        # If not enough time for full charge, use available window (partial charge)
+        if duration_hours > available_hours and available_hours > 0:
+            duration_hours = available_hours  # charge as much as possible before departure
+        elif available_hours <= 0:
+            # Departure already passed or now == departure — charge immediately for emergency
+            duration_hours = min(duration_hours, 1.0)  # cap at 1h as safety
+
         # 3. Optimization
         is_emergency = request.priority_level == 'emergency'
         
         # Check Grid Stress
-        # Calculate current load (Base + Active EVs) - simplified for scheduler context
-        # In a real app, this would query DB. Here we estimate or check strictly if needed.
-        # Let's rely on GridManager's base load + a safety margin for now, or just trust the optimizer unless it defines specific emergency.
-        
-        # New Feature: Emergency Mode Check
-        # We need to know active EVs to be accurate. 
-        # For this scope, let's assume we fetch it or pass it. 
-        # To keep it self-contained without circular DB dependency risks here, we'll use a heuristic:
-        # If base load is high (>90% capacity), we are in trouble.
         current_base_load = self.grid_manager.get_base_load(current_time)
-        # Assume some EVs are always there in peak
-        estimated_load = current_base_load + 20.0 # buffer
-        
+        estimated_load = current_base_load + 20.0
         in_emergency = self.grid_manager.check_emergency_mode(estimated_load)
-        
+
         if preferred_start:
             # User selected a suggested slot — use it directly
             try:
@@ -166,44 +170,49 @@ class Scheduler:
             start_time = current_time
             peak_optimized = False
         elif in_emergency and request.priority_level == 'flexible':
-            # Force delay to off-peak/safe time (e.g. after 22:00 or next solar window)
-            # Find next safe slot (e.g. tomorrow 10:00 or tonight 23:00)
-            # Simple: Delay by 4 hours
-            start_time = current_time + timedelta(hours=4)
+            # Delay by up to available window, but stay before departure
+            delay = min(timedelta(hours=4), timedelta(hours=available_hours / 2))
+            start_time = current_time + delay
             peak_optimized = True
         else:
-            # Smart Optimization
+            # Smart Optimization — find best start time within departure window
             if charger_type == 'DC':
-                 start_time = current_time
-                 peak_optimized = False
+                start_time = current_time
+                peak_optimized = False
             else:
-                 start_time = CostOptimizer.find_optimal_start_time(required_kwh, duration_hours, request.departure_time, current_time)
-                 time_diff = (start_time - current_time).total_seconds() / 60
-                 peak_optimized = time_diff > 15
+                start_time = CostOptimizer.find_optimal_start_time(
+                    required_kwh, duration_hours, departure_naive, current_time
+                )
+                time_diff = (start_time - current_time).total_seconds() / 60
+                peak_optimized = time_diff > 15
+
+        # ── CRITICAL: always ensure end_time does not exceed departure ──────
+        end_time = start_time + timedelta(hours=duration_hours)
+        if end_time > departure_naive:
+            # Shift start earlier so charging finishes exactly at departure
+            start_time = departure_naive - timedelta(hours=duration_hours)
+            if start_time < current_time:
+                start_time = current_time
+            end_time = min(start_time + timedelta(hours=duration_hours), departure_naive)
+
         # Calculate Cost & Carbon
-        # Fix: passing (kwh, start_time, duration, priority)
         cost = CostOptimizer.calculate_cost(required_kwh, start_time, duration_hours, request.priority_level)
-        
-        # Calculate savings (Mock logic for now since optimizer doesn't return it)
-        # Assuming optimized cost vs peak cost
         max_cost = required_kwh * CostOptimizer.PEAK_RATE
         total_savings = max(0, max_cost - cost)
-        
-        # Carbon savings logic 
-        carbon_factor = 0.4 # kg CO2 per kWh saved (approx diff between coal and solar/wind)
+        carbon_factor = 0.4
         carbon_savings = (required_kwh * carbon_factor) if peak_optimized else 0.0
-        
+
         allocation = ChargingAllocation(
             request_id=request.id,
             allocated_start_time=start_time,
-            allocated_end_time=start_time + timedelta(hours=duration_hours),
+            allocated_end_time=end_time,          # ← uses capped end_time
             charger_power_kw=power_kw,
             estimated_cost=round(cost, 2),
             cost_without_optimization=round(cost + total_savings, 2),
             peak_optimized=peak_optimized,
             status='Scheduled',
             charger_type=charger_type,
-            carbon_savings_kg=round(carbon_savings, 2) 
+            carbon_savings_kg=round(carbon_savings, 2)
         )
-        
+
         return allocation

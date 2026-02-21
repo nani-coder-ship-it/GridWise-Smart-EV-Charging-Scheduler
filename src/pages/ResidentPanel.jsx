@@ -270,6 +270,23 @@ const ResidentPanel = () => {
                                             <div className="detail-item"><span className="label">End Time</span><span className="value">{formatTime(schedule.endTime)}</span></div>
                                             <div className="detail-item"><span className="label">Duration</span><span className="value">{schedule.duration}</span></div>
                                         </div>
+
+                                        {/* Partial charge warning */}
+                                        {schedule.partialCharge && (
+                                            <div style={{
+                                                margin: '12px 0', padding: '10px 14px',
+                                                background: '#fffbeb', border: '1px solid #fcd34d',
+                                                borderRadius: 10, display: 'flex', gap: 10, alignItems: 'flex-start'
+                                            }}>
+                                                <AlertTriangle size={18} style={{ color: '#d97706', flexShrink: 0, marginTop: 2 }} />
+                                                <div style={{ fontSize: '0.82rem', color: '#92400e' }}>
+                                                    <strong>Partial charge only</strong> — not enough time before departure.<br />
+                                                    Battery will reach <strong>~{schedule.achievableBattery}%</strong> by your departure time.
+                                                    Consider DC Fast Charge or extending your departure window.
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <div className="cost-box">
                                             <div className="cost-row"><span>Estimated Cost</span><span className="cost-value">{schedule.cost}</span></div>
                                             <div className="cost-row savings"><span>Peak Avoidance Savings</span><span className="save-value">-{schedule.savings}</span></div>
@@ -313,7 +330,7 @@ const ResidentPanel = () => {
                                         </div>
                                         <div className="flex justify-between text-xs text-gray-500 mt-2">
                                             <span>Current: {formData.currentBattery}%</span>
-                                            <span>Target: {formData.targetBattery}%</span>
+                                            <span>Target: {schedule.partialCharge ? `~${schedule.achievableBattery}%` : `${formData.targetBattery}%`}</span>
                                         </div>
                                     </div>
                                 </Card>
