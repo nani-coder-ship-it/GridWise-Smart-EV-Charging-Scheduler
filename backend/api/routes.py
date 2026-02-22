@@ -265,6 +265,7 @@ def schedule_charging():
 @api.route('/active-schedule', methods=['GET'])
 def get_active_schedule():
     # Return future/active allocations with real derived status
+    IST = timedelta(hours=5, minutes=30)
     now = datetime.utcnow()
     allocations = ChargingAllocation.query.filter(ChargingAllocation.allocated_end_time > now).all()
     
@@ -275,7 +276,11 @@ def get_active_schedule():
         cost_inr = alloc.estimated_cost
         cost_usd = round(cost_inr / 83.0, 2)
         
-        # Derive real status from time window
+        # Convert UTC → IST for display (matches what the frontend parses from ISO-Z strings)
+        start_ist = alloc.allocated_start_time + IST
+        end_ist   = alloc.allocated_end_time   + IST
+
+        # Derive real status from time window (compare against UTC)
         if alloc.allocated_start_time <= now <= alloc.allocated_end_time:
             status = 'Charging'
         else:
@@ -284,20 +289,22 @@ def get_active_schedule():
         results.append({
             'vehicle_id': vehicle_id,
             'priority': priority,
-            'start_time': alloc.allocated_start_time.strftime('%H:%M'),
-            'end_time': alloc.allocated_end_time.strftime('%H:%M'),
+            'start_time': start_ist.strftime('%H:%M'),
+            'end_time':   end_ist.strftime('%H:%M'),
             'status': status,
             'cost_inr': cost_inr,
-            'cost_usd': cost_usd
+            'cost_usd': cost_usd,
+            '_sort_key': alloc.allocated_start_time.isoformat()  # sort by raw UTC
         })
     
-    results.sort(key=lambda x: x['start_time'])
+    results.sort(key=lambda x: x.pop('_sort_key'))
     return jsonify(results)
 
 
 @api.route('/completed-sessions', methods=['GET'])
 def get_completed_sessions():
     """Return past charging sessions (allocated_end_time <= now)"""
+    IST = timedelta(hours=5, minutes=30)
     now = datetime.utcnow()
     allocations = ChargingAllocation.query.filter(ChargingAllocation.allocated_end_time <= now).all()
     
@@ -307,20 +314,25 @@ def get_completed_sessions():
         priority = alloc.request.priority_level.capitalize() if alloc.request else "Normal"
         cost_inr = alloc.estimated_cost
         cost_usd = round(cost_inr / 83.0, 2)
+
+        # Convert UTC → IST for display
+        start_ist = alloc.allocated_start_time + IST
+        end_ist   = alloc.allocated_end_time   + IST
         
         results.append({
             'id': alloc.id,
             'request_id': alloc.request_id,
             'vehicle_id': vehicle_id,
             'priority': priority,
-            'start_time': alloc.allocated_start_time.strftime('%H:%M'),
-            'end_time': alloc.allocated_end_time.strftime('%H:%M'),
+            'start_time': start_ist.strftime('%H:%M'),
+            'end_time':   end_ist.strftime('%H:%M'),
             'status': 'Completed',
             'cost_inr': cost_inr,
-            'cost_usd': cost_usd
+            'cost_usd': cost_usd,
+            '_sort_key': alloc.allocated_end_time.isoformat()  # sort by raw UTC
         })
     
-    results.sort(key=lambda x: x['end_time'], reverse=True)
+    results.sort(key=lambda x: x.pop('_sort_key'), reverse=True)
     return jsonify(results)
 
 
@@ -540,3 +552,83 @@ def get_grid_load_history():
         })
         
     return jsonify(history)
+
+
+@api.route('/charging-status/<vehicle_id>', methods=['GET'])
+def get_charging_status(vehicle_id):
+    """
+    Login-free status lookup for residents.
+    Returns the most recent charging session for the given vehicle_id.
+    Computes real-time derived status: Scheduled / Charging / Completed.
+    """
+    # Find the latest request for this vehicle (by id DESC)
+    req = (
+        ChargingRequest.query
+        .filter(ChargingRequest.vehicle_id == vehicle_id)
+        .order_by(ChargingRequest.id.desc())
+        .first()
+    )
+
+    if not req:
+        return jsonify({'error': f'No session found for vehicle "{vehicle_id}"'}), 404
+
+    alloc = req.allocation
+    now = datetime.utcnow()
+
+    def iso_utc(dt):
+        return dt.strftime('%Y-%m-%dT%H:%M:%SZ') if dt else None
+
+    if not alloc:
+        # Request exists but no allocation yet (pending)
+        return jsonify({
+            'vehicle_id': req.vehicle_id,
+            'status': 'Pending',
+            'scheduled_start': None,
+            'scheduled_end': None,
+            'estimated_completion': None,
+            'energy_delivered_kwh': 0.0,
+            'total_required_kwh': round(req.required_kwh, 3),
+            'charger_type': req.charger_type,
+            'charger_power_kw': None,
+            'time_remaining_minutes': None,
+            'estimated_cost': None,
+            'total_cost': None,
+        }), 200
+
+    start = alloc.allocated_start_time
+    end   = alloc.allocated_end_time
+    power_kw = alloc.charger_power_kw
+    required_kwh = req.required_kwh
+
+    # ── Derive status from time window ──────────────────────────────────────
+    if now < start:
+        status = 'Scheduled'
+        elapsed_hours = 0.0
+        time_remaining_minutes = round((end - now).total_seconds() / 60)
+    elif start <= now <= end:
+        status = 'Charging'
+        elapsed_hours = (now - start).total_seconds() / 3600
+        time_remaining_minutes = max(0, round((end - now).total_seconds() / 60))
+    else:
+        status = 'Completed'
+        elapsed_hours = (end - start).total_seconds() / 3600
+        time_remaining_minutes = 0
+
+    energy_delivered_kwh = round(min(power_kw * elapsed_hours, required_kwh), 3)
+
+    return jsonify({
+        'vehicle_id': req.vehicle_id,
+        'status': status,
+        'scheduled_start': iso_utc(start),
+        'scheduled_end': iso_utc(end),
+        'estimated_completion': iso_utc(end),
+        'energy_delivered_kwh': energy_delivered_kwh,
+        'total_required_kwh': round(required_kwh, 3),
+        'charger_type': req.charger_type,
+        'charger_power_kw': power_kw,
+        'time_remaining_minutes': time_remaining_minutes,
+        'estimated_cost': round(alloc.estimated_cost, 2),
+        'total_cost': round(alloc.estimated_cost, 2) if status == 'Completed' else None,
+        'peak_optimized': alloc.peak_optimized,
+        'carbon_savings_kg': round(alloc.carbon_savings_kg or 0.0, 3),
+    }), 200

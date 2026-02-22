@@ -80,22 +80,30 @@ class SlotSuggester:
                 priority: str, db) -> list:
         """
         Return top-3 ranked slot suggestions as a list of dicts.
+        Every suggestion is guaranteed to finish before departure_time.
         """
-        # Latest the slot can start so charging finishes before departure
+        # Latest the slot can start so charging FINISHES before departure
         latest_start = departure_time - timedelta(hours=duration_hours)
+
+        # If there is no room before departure, just start now and charge what we can
         if latest_start <= current_time:
-            latest_start = current_time + timedelta(hours=duration_hours + 1)
+            latest_start = current_time  # single slot: start now
 
         lookahead_limit = current_time + timedelta(hours=self.LOOK_AHEAD_HOURS)
-        search_end      = min(latest_start, lookahead_limit)
+        # Never search past latest_start (enforces departure constraint)
+        search_end = min(latest_start, lookahead_limit)
 
         candidates = []
         t = current_time
         while t <= search_end:
             committed = self._committed_load_at(t, duration_hours, db)
             slot      = self._score_slot(t, duration_hours, kwh, priority, committed)
-            # Skip windows where adding this vehicle would exceed 95%
-            projected = slot["grid_load_pct"] + (kwh / duration_hours / self.grid_manager.transformer_capacity_kw * 100)
+            # Clamp slot end to departure so display is honest
+            slot_end_clamped = min(t + timedelta(hours=duration_hours), departure_time)
+            slot['end'] = slot_end_clamped.strftime('%H:%M')
+            slot['end_dt'] = slot_end_clamped
+            # Skip windows where adding this vehicle would exceed 95% grid capacity
+            projected = slot['grid_load_pct'] + (kwh / duration_hours / self.grid_manager.transformer_capacity_kw * 100)
             if projected < 95:
                 candidates.append(slot)
             t += timedelta(minutes=self.WINDOW_STEP_MINUTES)

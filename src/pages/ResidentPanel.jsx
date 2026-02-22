@@ -4,6 +4,7 @@ import Card, { CardTitle, CardContent } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import SlotSuggestions from '../components/SlotSuggestions';
+import ChargingStatusLookup from '../components/ChargingStatusLookup';
 import { BatteryCharging, CheckCircle2, Zap, ArrowRight, Leaf, AlertTriangle } from 'lucide-react';
 import { useGrid } from '../context/GridContext';
 import './ResidentPanel.css';
@@ -395,6 +396,10 @@ const ResidentPanel = () => {
                         )}
                     </div>
                 </div>
+
+                {/* ── Charging Status Lookup ── */}
+                <ChargingStatusLookup />
+
             </div>
         </div>
     );

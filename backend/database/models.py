@@ -14,7 +14,10 @@ class ChargingRequest(db.Model):
     estimated_duration_minutes = db.Column(db.Float, nullable=False)
     fairness_score = db.Column(db.Float, default=1.0)
     status = db.Column(db.String(20), default='pending')  # 'pending', 'scheduled', 'completed'
-    charger_type = db.Column(db.String(10), default='AC')
+    charger_type       = db.Column(db.String(10),  default='AC')
+    phone_number       = db.Column(db.String(15),  nullable=True)   # 10-digit, stored as-is
+    sms_notified       = db.Column(db.String(100), default='')      # comma-sep events sent
+
 
     def to_dict(self):
         return {
