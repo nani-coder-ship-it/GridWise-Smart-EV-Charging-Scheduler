@@ -7,6 +7,7 @@ from engine.insights import InsightsGenerator
 from engine.grid_manager import GridLoadManager
 from engine.slot_suggester import SlotSuggester
 from engine.sms_service import WhatsAppService
+from sockets import socketio
 
 api = Blueprint('api', __name__)
 scheduler = Scheduler()
@@ -233,6 +234,12 @@ def schedule_charging():
 
         insight = InsightsGenerator.generate_insight(req, allocation)
 
+        # ── Push live update to all connected clients ──────────────────────
+        socketio.emit('schedule_update', {
+            'vehicle_id': req.vehicle_id,
+            'event': 'scheduled'
+        })
+
         return jsonify({
             'status': 'success',
             'request_id': req.id,
@@ -245,7 +252,6 @@ def schedule_charging():
                 'load':              'Optimized' if allocation.peak_optimized else 'Standard',
                 'carbonReduced':     f'{allocation.carbon_savings_kg} kg CO\u2082',
                 'isOffPeak':         allocation.peak_optimized,
-                # ── New fields ─────────────────────────────────────────────
                 'partialCharge':     actual_is_partial,
                 'achievableBattery': achievable_pct,
                 'confirmation':      confirmation,
@@ -632,3 +638,51 @@ def get_charging_status(vehicle_id):
         'peak_optimized': alloc.peak_optimized,
         'carbon_savings_kg': round(alloc.carbon_savings_kg or 0.0, 3),
     }), 200
+
+
+@api.route('/charging-status/<vehicle_id>', methods=['DELETE'])
+def cancel_charging_session(vehicle_id):
+    """
+    Cancel a SCHEDULED session for the given vehicle_id.
+    Refuses to cancel sessions that are already Charging or Completed.
+    """
+    req = (
+        ChargingRequest.query
+        .filter(ChargingRequest.vehicle_id == vehicle_id)
+        .order_by(ChargingRequest.id.desc())
+        .first()
+    )
+
+    if not req:
+        return jsonify({'error': f'No session found for "{vehicle_id}"'}), 404
+
+    alloc = req.allocation
+    now = datetime.utcnow()
+
+    if not alloc:
+        # Pending request — just cancel it
+        req.status = 'cancelled'
+        db.session.commit()
+        socketio.emit('schedule_update', {'vehicle_id': vehicle_id, 'event': 'cancelled'})
+        return jsonify({'message': f'Pending request for "{vehicle_id}" cancelled.'}), 200
+
+    # Derive current status
+    if now < alloc.allocated_start_time:
+        current_status = 'Scheduled'
+    elif alloc.allocated_start_time <= now <= alloc.allocated_end_time:
+        current_status = 'Charging'
+    else:
+        current_status = 'Completed'
+
+    if current_status != 'Scheduled':
+        return jsonify({
+            'error': f'Cannot cancel a session that is already {current_status}.'
+        }), 409
+
+    # Delete allocation + mark request cancelled
+    db.session.delete(alloc)
+    req.status = 'cancelled'
+    db.session.commit()
+
+    socketio.emit('schedule_update', {'vehicle_id': vehicle_id, 'event': 'cancelled'})
+    return jsonify({'message': f'Session for "{vehicle_id}" cancelled successfully.'}), 200

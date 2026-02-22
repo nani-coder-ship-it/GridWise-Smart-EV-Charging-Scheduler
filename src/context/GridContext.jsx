@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useSocket } from '../hooks/useSocket';
+import { API_BASE } from '../api';
 
 const GridContext = createContext();
 
@@ -59,10 +61,18 @@ export const GridProvider = ({ children }) => {
         });
     }, [sessions]);
 
+    // ── WebSocket live refresh ───────────────────────────────────────────────
+    // When the backend emits schedule_update (after schedule or cancel),
+    // immediately pull fresh data so the admin dashboard is always current.
+    useSocket('schedule_update', useCallback(() => {
+        refreshData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []));
+
     // API Service Layer (Internal)
     const fetchGridStatus = async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/grid/status');
+            const response = await fetch(`${API_BASE}/grid/status`);
             const data = await response.json();
 
             setStats({
@@ -86,7 +96,7 @@ export const GridProvider = ({ children }) => {
 
     const fetchActiveSchedule = async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/active-schedule');
+            const response = await fetch(`${API_BASE}/active-schedule`);
             const data = await response.json();
             setSessions(data);
         } catch (error) {
@@ -96,7 +106,7 @@ export const GridProvider = ({ children }) => {
 
     const fetchLoadHistory = async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/grid/load-history');
+            const response = await fetch(`${API_BASE}/grid/load-history`);
             const data = await response.json();
             setHistoryData(data);
         } catch (error) {
@@ -106,7 +116,7 @@ export const GridProvider = ({ children }) => {
 
     const fetchSystemLogs = async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/system/logs');
+            const response = await fetch(`${API_BASE}/system/logs`);
             const data = await response.json();
             setLogs(data);
         } catch (error) {
@@ -132,7 +142,7 @@ export const GridProvider = ({ children }) => {
 
     const addRequest = async (request) => {
         try {
-            const response = await fetch('http://localhost:5000/api/schedule', {
+            const response = await fetch(`${API_BASE}/schedule`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

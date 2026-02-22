@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Trash2 } from 'lucide-react';
+import { API_BASE } from '../../api';
 
 const Sessions = ({ sessions }) => {
     const [filter, setFilter] = useState('All');
@@ -17,7 +18,7 @@ const Sessions = ({ sessions }) => {
     const fetchCompleted = async () => {
         setLoadingCompleted(true);
         try {
-            const res = await fetch('http://localhost:5000/api/completed-sessions');
+            const res = await fetch(`${API_BASE}/completed-sessions`);
             const data = await res.json();
             setCompletedSessions(Array.isArray(data) ? data : []);
         } catch {
@@ -33,7 +34,7 @@ const Sessions = ({ sessions }) => {
 
         setDeletingId(session.id);
         try {
-            const res = await fetch(`http://localhost:5000/api/sessions/${session.id}`, { method: 'DELETE' });
+            const res = await fetch(`${API_BASE}/sessions/${session.id}`, { method: 'DELETE' });
             if (res.ok) {
                 // Optimistically remove from list
                 setCompletedSessions(prev => prev.filter(s => s.id !== session.id));
@@ -59,7 +60,7 @@ const Sessions = ({ sessions }) => {
         if (!window.confirm(`Remove all ${completedSessions.length} completed sessions? This cannot be undone.`)) return;
         setClearingAll(true);
         try {
-            const res = await fetch('http://localhost:5000/api/completed-sessions/all', { method: 'DELETE' });
+            const res = await fetch(`${API_BASE}/completed-sessions/all`, { method: 'DELETE' });
             const data = await res.json();
             if (res.ok) {
                 setCompletedSessions([]);

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Search, Clock, Zap, CheckCircle2, AlertCircle,
-    BatteryCharging, Leaf, DollarSign, Timer, RotateCcw
+    BatteryCharging, Leaf, DollarSign, Timer, RotateCcw, XCircle
 } from 'lucide-react';
+import VehicleQRCode from './ui/VehicleQRCode';
 
-const API = 'http://localhost:5000/api';
+import { API_BASE as API } from '../api';
 
 /* ── Helpers ── */
 const fmtTime = (iso) =>
@@ -64,7 +65,9 @@ const ChargingStatusLookup = () => {
     const [result, setResult] = useState(null);   // API response
     const [error, setError] = useState('');
 
-    // Live countdown — updated every second when Charging
+    const [cancelConfirm, setCancelConfirm] = useState(false);
+    const [cancelling, setCancelling] = useState(false);
+    const [cancelSuccess, setCancelSuccess] = useState('');
     const [liveRemaining, setLiveRemaining] = useState(null);
     const [liveEnergy, setLiveEnergy] = useState(null);
     const timerRef = useRef(null);
@@ -91,6 +94,30 @@ const ChargingStatusLookup = () => {
         tick(); // immediate
         timerRef.current = setInterval(tick, 1000);
     }, [result]);
+
+    const handleCancel = async () => {
+        if (!result?.vehicle_id) return;
+        setCancelling(true);
+        try {
+            const res = await fetch(`${API}/charging-status/${encodeURIComponent(result.vehicle_id)}`, {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setCancelSuccess(`Session for ${result.vehicle_id} cancelled successfully.`);
+                setResult(null);
+                setCancelConfirm(false);
+            } else {
+                setError(data.error || 'Could not cancel session.');
+                setCancelConfirm(false);
+            }
+        } catch {
+            setError('Network error while cancelling.');
+            setCancelConfirm(false);
+        } finally {
+            setCancelling(false);
+        }
+    };
 
     const handleLookup = async (e) => {
         e.preventDefault();
@@ -121,6 +148,8 @@ const ChargingStatusLookup = () => {
         setResult(null);
         setError('');
         setVehicleId('');
+        setCancelSuccess('');
+        setCancelConfirm(false);
         clearInterval(timerRef.current);
     };
 
@@ -160,6 +189,15 @@ const ChargingStatusLookup = () => {
                     </button>
                 )}
             </form>
+
+            {/* Cancel success banner */}
+            {cancelSuccess && (
+                <div className="sl-cancel-success">
+                    <CheckCircle2 size={16} />
+                    {cancelSuccess}
+                    <button className="sl-btn-reset" onClick={handleReset} style={{ marginLeft: 'auto' }}><RotateCcw size={13} /></button>
+                </div>
+            )}
 
             {/* Error / not-found */}
             {error && !loading && (
@@ -242,6 +280,38 @@ const ChargingStatusLookup = () => {
                         />
                     )}
 
+                    {/* Cancel section — only when Scheduled */}
+                    {result.status === 'Scheduled' && (
+                        <div className="sl-cancel-section">
+                            {!cancelConfirm ? (
+                                <button
+                                    className="sl-btn-cancel"
+                                    onClick={() => setCancelConfirm(true)}
+                                >
+                                    <XCircle size={15} /> Cancel Session
+                                </button>
+                            ) : (
+                                <div className="sl-cancel-confirm">
+                                    <span>Are you sure you want to cancel this session?</span>
+                                    <button
+                                        className="sl-btn-cancel-yes"
+                                        onClick={handleCancel}
+                                        disabled={cancelling}
+                                    >
+                                        {cancelling ? '...' : 'Yes, Cancel'}
+                                    </button>
+                                    <button
+                                        className="sl-btn-cancel-no"
+                                        onClick={() => setCancelConfirm(false)}
+                                        disabled={cancelling}
+                                    >
+                                        Keep It
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* Footer row */}
                     <div className="sl-card-footer">
                         {result.peak_optimized && (
@@ -255,6 +325,11 @@ const ChargingStatusLookup = () => {
                         {result.status === 'Charging' && (
                             <span className="sl-live-tag">● LIVE</span>
                         )}
+                    </div>
+
+                    {/* QR Code section */}
+                    <div className="sl-qr-section">
+                        <VehicleQRCode vehicleId={result.vehicle_id} />
                     </div>
                 </div>
             )}

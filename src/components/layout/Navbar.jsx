@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Zap } from 'lucide-react';
 import Button from '../ui/Button';
+import DarkModeToggle from '../ui/DarkModeToggle';
 import './Navbar.css';
 import { clsx } from 'clsx';
 
@@ -29,6 +30,7 @@ const Navbar = () => {
                 </div>
 
                 <div className="navbar-actions desktop-only">
+                    <DarkModeToggle />
                     <Link to="/resident">
                         <Button variant="primary" size="sm">Request Charging</Button>
                     </Link>

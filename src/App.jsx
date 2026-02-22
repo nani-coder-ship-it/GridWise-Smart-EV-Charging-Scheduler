@@ -5,6 +5,7 @@ import Footer from './components/layout/Footer';
 import LandingPage from './pages/LandingPage';
 import ResidentPanel from './pages/ResidentPanel';
 import AdminDashboard from './pages/AdminDashboard';
+import StatusPage from './pages/StatusPage';
 import { GridProvider } from './context/GridContext';
 import './index.css';
 
@@ -18,6 +19,7 @@ function App() {
                         <Route path="/" element={<LandingPage />} />
                         <Route path="/resident" element={<ResidentPanel />} />
                         <Route path="/admin" element={<AdminDashboard />} />
+                        <Route path="/status" element={<StatusPage />} />
                     </Routes>
                     <Footer />
                 </div>

@@ -2,12 +2,13 @@ from flask import Flask
 from flask_cors import CORS
 from database.db import db
 from api.routes import api
+from sockets import socketio
 import os
 import threading
 import time
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}, r"/socket.io/*": {"origins": "*"}})
 
 # Configure SQLite
 if os.environ.get('FLASK_ENV') == 'testing':
@@ -18,6 +19,7 @@ else:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+socketio.init_app(app)
 
 # Register Blueprints
 app.register_blueprint(api, url_prefix='/api')
@@ -92,4 +94,4 @@ if __name__ == '__main__':
         t.start()
         print('[Notify] Background worker started (30s polling).')
 
-    app.run(debug=True, port=5000)
+    socketio.run(app, host='0.0.0.0', debug=True, port=5000, allow_unsafe_werkzeug=True)

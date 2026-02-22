@@ -9,7 +9,7 @@ import { BatteryCharging, CheckCircle2, Zap, ArrowRight, Leaf, AlertTriangle } f
 import { useGrid } from '../context/GridContext';
 import './ResidentPanel.css';
 
-const API = 'http://localhost:5000/api';
+import { API_BASE as API } from '../api';
 
 const ResidentPanel = () => {
     const { submissionResult, requestNotificationPermission, sendBrowserNotification } = useGrid();
@@ -106,10 +106,12 @@ const ResidentPanel = () => {
 
     /* ── Step 2: User picks a suggested slot ─────────────── */
     const handleBookSlot = async (slot) => {
-        // Build ISO start time from slot.start (HH:MM) — treat as today UTC
+        // Build ISO start time from slot.start (HH:MM) local time
+        // Use setHours (local) NOT setUTCHours, otherwise IST (+5:30) shifts the
+        // time 5h30m backwards and the backend rejects it as "in the past".
         const [hh, mm] = slot.start.split(':').map(Number);
         const startDt = new Date();
-        startDt.setUTCHours(hh, mm, 0, 0);
+        startDt.setHours(hh, mm, 0, 0);
         const preferredIso = startDt.toISOString();
 
         const res = await fetch(`${API}/schedule`, {
