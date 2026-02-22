@@ -94,4 +94,5 @@ if __name__ == '__main__':
         t.start()
         print('[Notify] Background worker started (30s polling).')
 
-    socketio.run(app, host='0.0.0.0', debug=True, port=5000, allow_unsafe_werkzeug=True)
+    is_production = os.environ.get('RENDER') is not None
+    socketio.run(app, host='0.0.0.0', debug=not is_production, port=5000, allow_unsafe_werkzeug=True)
