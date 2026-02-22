@@ -60,7 +60,7 @@ const AdminDashboard = () => {
 
     return (
         <div className="admin-layout">
-            {/* LEFT SIDEBAR */}
+            {/* LEFT SIDEBAR (desktop only) */}
             <aside className="sidebar">
                 <div className="logo-container">
                     <div style={{ width: 36, height: 36, background: '#3b82f6', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -113,7 +113,7 @@ const AdminDashboard = () => {
                             System Online
                         </div>
                         {/* Transformer Load Quick Indicator */}
-                        <div style={{
+                        <div className="header-load-badge" style={{
                             display: 'flex', alignItems: 'center', gap: 8,
                             background: 'white', border: '1px solid #e5e7eb',
                             borderRadius: 99, padding: '6px 14px', fontSize: '0.82rem', fontWeight: 600, color: '#374151',
@@ -133,6 +133,20 @@ const AdminDashboard = () => {
                     {renderView()}
                 </div>
             </main>
+
+            {/* MOBILE BOTTOM NAV — visible on ≤768px only */}
+            <nav className="mobile-bottom-nav">
+                {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+                    <button
+                        key={id}
+                        className={`mobile-nav-btn ${activeView === id ? 'active' : ''}`}
+                        onClick={() => setActiveView(id)}
+                    >
+                        <Icon size={20} />
+                        <span>{label.split(' ')[0]}</span>
+                    </button>
+                ))}
+            </nav>
         </div>
     );
 };
